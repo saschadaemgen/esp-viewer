@@ -1,22 +1,22 @@
 /*
  * main.c - KOENIGSLIGA UniFi-Display
  *
- * ESP-Saison 2 Tag 2: nach Setup-Mode-Integration
+ * ESP-Saison 2 Tag 2: nach unifix_client-Integration
  *
  * Aufgaben dieser Datei:
  *   - app_main() Entry: NVS, LVGL, Display-Init
  *   - Setup-Mode-Check: wenn kein Token in NVS -> setup_mode_run
  *   - WLAN-Initialisierung (wifi_init, wifi_event_handler)
+ *   - Nach IP_GOT: unifix_client_init + heartbeat-Probe
+ *   - Stream-Pipeline starten (KOENIGSLIGA-Saison-1-Verhalten,
+ *     unabhaengig von Heartbeat-Erfolg)
  *   - Erste UI (ui_init, status_set)
  *
- * Was NICHT mehr hier ist (extrahiert):
+ * Was NICHT mehr hier ist:
  *   - MJPEG-Stream-Pipeline -> stream_pipeline.c und .h
  *   - Token-NVS-Storage     -> services/device_token.c und .h
  *   - Setup-Modus           -> services/setup_mode.c und .h
- *
- * Saison 2 Spaeter wird hier weiter aufgeraeumt:
- *   - WLAN-Code -> wifi.c (wenn Setup-Mode dazukommt)
- *   - UI-Code   -> ui/-Files (wenn FSM-Screens kommen)
+ *   - HTTP-API-Client       -> services/unifix_client.c und .h
  */
 
 #include <string.h>
@@ -37,6 +37,7 @@
 #include "stream_pipeline.h"
 #include "services/device_token.h"
 #include "services/setup_mode.h"
+#include "services/unifix_client.h"
 
 static const char *TAG = "KOENIG";
 
@@ -60,6 +61,36 @@ static void status_set(const char *fmt, ...)
     }
 }
 
+/*
+ * Beim ersten IP_GOT-Event: Heartbeat-Probe + Stream starten.
+ *
+ * Heartbeat-Probe ist diagnostisch, NICHT blocker fuer Stream.
+ * Saison-1-Verhalten bleibt erhalten: Stream startet immer.
+ */
+static void on_got_ip(void)
+{
+    ESP_LOGI(TAG, "Initializing unifix-client ...");
+    esp_err_t err = unifix_client_init();
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "Probing /esp/heartbeat ...");
+        err = unifix_client_heartbeat();
+        if (err == ESP_OK) {
+            ESP_LOGI(TAG, "Heartbeat OK - unifix-Server reachable");
+        } else {
+            ESP_LOGW(TAG, "Heartbeat failed: %s (continuing anyway)",
+                     esp_err_to_name(err));
+        }
+    } else {
+        ESP_LOGW(TAG, "unifix-client init failed: %s (continuing anyway)",
+                 esp_err_to_name(err));
+    }
+
+    /* Stream startet IMMER, unabhaengig vom Heartbeat-Ergebnis.
+     * Damit erhalten wir Saison-1-Verhalten als Sicherheits-Netz. */
+    ESP_LOGI(TAG, "Starting stream pipeline ...");
+    stream_pipeline_start();
+}
+
 static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
@@ -75,7 +106,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
         ip_event_got_ip_t *e = (ip_event_got_ip_t *)data;
         s_retry = 0;
         ESP_LOGI(TAG, "IP: " IPSTR, IP2STR(&e->ip_info.ip));
-        stream_pipeline_start();
+        on_got_ip();
     }
 }
 
@@ -155,8 +186,6 @@ void app_main(void)
 
     /*
      * Setup-Mode-Check VOR wifi_init.
-     * Wenn kein Token in NVS -> Setup-Modus.
-     * Setup-Modus blockiert bis Token empfangen + esp_restart.
      */
     if (!device_token_has()) {
         status_set("Setup-Modus - bitte Token einfuegen");
