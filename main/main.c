@@ -1,15 +1,18 @@
 /*
  * main.c - KOENIGSLIGA UniFi-Display
  *
- * ESP-Saison 2 Tag 1: nach Refactoring
+ * ESP-Saison 2 Tag 2: nach Setup-Mode-Integration
  *
  * Aufgaben dieser Datei:
  *   - app_main() Entry: NVS, LVGL, Display-Init
+ *   - Setup-Mode-Check: wenn kein Token in NVS -> setup_mode_run
  *   - WLAN-Initialisierung (wifi_init, wifi_event_handler)
  *   - Erste UI (ui_init, status_set)
  *
  * Was NICHT mehr hier ist (extrahiert):
  *   - MJPEG-Stream-Pipeline -> stream_pipeline.c und .h
+ *   - Token-NVS-Storage     -> services/device_token.c und .h
+ *   - Setup-Modus           -> services/setup_mode.c und .h
  *
  * Saison 2 Spaeter wird hier weiter aufgeraeumt:
  *   - WLAN-Code -> wifi.c (wenn Setup-Mode dazukommt)
@@ -32,6 +35,8 @@
 #include "bsp_board_extra.h"
 
 #include "stream_pipeline.h"
+#include "services/device_token.h"
+#include "services/setup_mode.h"
 
 static const char *TAG = "KOENIG";
 
@@ -147,6 +152,21 @@ void app_main(void)
     bsp_display_backlight_on();
 
     ui_init();
+
+    /*
+     * Setup-Mode-Check VOR wifi_init.
+     * Wenn kein Token in NVS -> Setup-Modus.
+     * Setup-Modus blockiert bis Token empfangen + esp_restart.
+     */
+    if (!device_token_has()) {
+        status_set("Setup-Modus - bitte Token einfuegen");
+        ESP_LOGW(TAG, "No device_token in NVS, entering setup mode");
+        setup_mode_run();
+        /* Kehrt nicht zurueck (esp_restart) */
+        return;
+    }
+
+    ESP_LOGI(TAG, "Device token present, starting normal boot");
     status_set("Starte WLAN ...");
     wifi_init();
 }
