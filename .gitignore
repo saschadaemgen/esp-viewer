@@ -1,0 +1,43 @@
+# ESP-IDF Build-Artefakte
+build/
+sdkconfig.old
+*.bin
+*.elf
+*.map
+
+# Managed Components werden aus dependencies.lock regeneriert
+managed_components/
+
+# Squareline Studio Backups (von vorher behalten)
+**/squareline/backup/**
+**/squareline/autosave/**
+
+# LVGL-Component (wird via managed_components gezogen falls noetig)
+components/lvgl/**
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS-Krempel
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs / temporaere Dateien
+*.log
+*.tmp
+*.bak
+
+# Python / pre-commit
+__pycache__/
+*.pyc
+.venv/
+
+# Geheime Sachen die NIE in git landen sollen
+secrets.h
+*.token
+*_secret.*
