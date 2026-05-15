@@ -1,20 +1,31 @@
 /*
  * main.c - KOENIGSLIGA UniFi-Display
  *
- * ESP-Saison 2 Tag 3: nach SSE-Listener-Integration
+ * ESP-Saison 2: Loading-Screen v2
  *
- * Aufgaben dieser Datei:
- *   - app_main() Entry: NVS, LVGL, Display-Init
- *   - Setup-Mode-Check: wenn kein Token in NVS -> setup_mode_run
- *   - WLAN-Initialisierung (wifi_init, wifi_event_handler)
- *   - Nach IP_GOT:
- *       unifix_client_init + heartbeat-Probe
- *       sse_client_start fuer /esp/events
- *       stream_pipeline_start (KOENIGSLIGA-Saison-1-Verhalten)
+ * Architecture (FIXED after dangling-pointer crash):
+ *   - Loading screen is an OWN lv_obj_t (created with lv_obj_create(NULL))
+ *   - Idle screen is ANOTHER own lv_obj_t (created the same way)
+ *   - LVGL switches between them with lv_screen_load_anim - no shared
+ *     parent, no lv_obj_clean side effects, no dangling pointers.
  *
- * Event-Callback:
- *   on_sse_event() loggt aktuell nur. Tag 7+ wird das eine
- *   Event-Queue an die FSM fuettern.
+ * Boot flow:
+ *   1. NVS + display init
+ *   2. scr_loading_create -> activates loading screen
+ *   3. status = "Starte"
+ *   4. Setup-mode check (if no token in NVS, abort)
+ *   5. status = "Verbinde WLAN", wifi_init()
+ *   6. On reconnects: status = "Reconnect N"
+ *   7. On IP_GOT:
+ *      - status = "Verbunden"
+ *      - Build idle screen on its own handle (NOT active yet)
+ *      - Build ringing overlay on the idle screen (hidden)
+ *      - status = "Lade Stream"
+ *      - unifix_client_init + heartbeat
+ *      - SSE listener
+ *      - stream_pipeline_start(stream_slot)
+ *      - 500ms later: lv_screen_load_anim(idle_screen, FADE, 400ms)
+ *        LVGL fades loading out and idle in. No code in our hands.
  */
 
 #include <string.h>
@@ -26,6 +37,7 @@
 #include "esp_wifi.h"
 #include "esp_netif.h"
 #include "esp_event.h"
+#include "esp_timer.h"
 
 #include "lvgl.h"
 #include "bsp/esp-bsp.h"
@@ -38,60 +50,123 @@
 #include "services/unifix_client.h"
 #include "services/sse_client.h"
 
+#include "ui/scr_loading.h"
+#include "ui/scr_idle.h"
+#include "ui/scr_ringing.h"
+
 static const char *TAG = "KOENIG";
 
 #define WIFI_SSID       "SONCLOUD"
 #define WIFI_PASSWORD   "MKwlan1d250e-mured5"
 
+#define PLACEHOLDER_UNIT_NAME   "Daemgen"
+#define PLACEHOLDER_DOOR_NAME   "Hauseingang"
+#define PLACEHOLDER_NOW         "14:23:01"
+#define PLACEHOLDER_NOW_DATE    "Fr, 15. Mai"
+
+#define LOADING_TO_IDLE_DELAY_MS  500
+#define SCREEN_FADE_DURATION_MS   400
+
 static int s_retry = 0;
-static lv_obj_t *s_status_label = NULL;
+static lv_obj_t *s_ringing_overlay = NULL;
+static lv_obj_t *s_idle_screen     = NULL;
 
-static void status_set(const char *fmt, ...)
-{
-    if (!s_status_label) return;
-    char buf[128];
-    va_list args;
-    va_start(args, fmt);
-    vsnprintf(buf, sizeof(buf), fmt, args);
-    va_end(args);
-    if (bsp_display_lock(100)) {
-        lv_label_set_text(s_status_label, buf);
-        bsp_display_unlock();
-    }
-}
 
-/*
- * Callback fuer SSE-Events vom unifix-Server.
- *
- * Tag 3: nur loggen.
- * Tag 7+: Event-Queue an die FSM fuettern.
- *
- * Wird aus der sse_listener-Task aufgerufen. NICHT blockieren!
- */
+/* ============================================================
+ * SSE event callback
+ * ============================================================ */
 static void on_sse_event(const char *event_name, const char *data)
 {
     if (strcmp(event_name, "heartbeat") == 0) {
         ESP_LOGI(TAG, "[SSE] heartbeat: %s", data);
-    } else if (strcmp(event_name, "doorbell.ring") == 0) {
-        ESP_LOGW(TAG, "[SSE] >>> DOORBELL START <<< %s", data);
-    } else if (strcmp(event_name, "doorbell.cancel") == 0) {
-        ESP_LOGW(TAG, "[SSE] <<< DOORBELL CANCEL >>> %s", data);
-    } else {
-        ESP_LOGI(TAG, "[SSE] %s: %s", event_name, data);
+        return;
     }
+
+    if (strcmp(event_name, "doorbell.ring") == 0) {
+        ESP_LOGW(TAG, "[SSE] >>> DOORBELL RING <<< %s", data);
+        if (s_ringing_overlay && bsp_display_lock(50)) {
+            lv_obj_clear_flag(s_ringing_overlay, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_move_foreground(s_ringing_overlay);
+            bsp_display_unlock();
+        }
+        return;
+    }
+
+    if (strcmp(event_name, "doorbell.cancel") == 0) {
+        ESP_LOGW(TAG, "[SSE] <<< DOORBELL CANCEL >>> %s", data);
+        if (s_ringing_overlay && bsp_display_lock(50)) {
+            lv_obj_add_flag(s_ringing_overlay, LV_OBJ_FLAG_HIDDEN);
+            bsp_display_unlock();
+        }
+        return;
+    }
+
+    ESP_LOGI(TAG, "[SSE] %s: %s", event_name, data);
 }
 
-/*
- * Beim ersten IP_GOT-Event:
- *   1. Heartbeat-Probe (diagnostisch)
- *   2. SSE-Listener fuer /esp/events starten
- *   3. Stream-Pipeline starten
- *
- * Saison-1-Verhalten erhalten: Stream startet IMMER.
- * unifix-Client-Fehler sind nicht-blocker.
- */
+
+/* ============================================================
+ * Switch from loading to idle screen
+ * Called from esp_timer service task - takes LVGL lock.
+ * ============================================================ */
+static void fade_to_idle_cb(void *arg)
+{
+    (void)arg;
+    if (!s_idle_screen) {
+        ESP_LOGW(TAG, "fade_to_idle: idle screen not ready");
+        return;
+    }
+    if (!bsp_display_lock(200)) {
+        ESP_LOGW(TAG, "fade_to_idle: could not acquire display lock");
+        return;
+    }
+    ESP_LOGI(TAG, "Switching from loading to idle screen (fade %dms)",
+             SCREEN_FADE_DURATION_MS);
+    lv_screen_load_anim(s_idle_screen,
+                        LV_SCR_LOAD_ANIM_FADE_ON,
+                        SCREEN_FADE_DURATION_MS,
+                        0, false);
+    bsp_display_unlock();
+}
+
+
+/* ============================================================
+ * On IP got: build idle screen on its own handle (not active yet),
+ *            build ringing overlay on top of idle,
+ *            start stream + SSE, then schedule the fade.
+ * ============================================================ */
 static void on_got_ip(void)
 {
+    scr_loading_set_status("Verbunden");
+
+    lv_obj_t *stream_slot = NULL;
+
+    if (bsp_display_lock(200)) {
+        /* Create idle screen as its own top-level screen (parent=NULL).
+         * It is NOT activated yet - lv_screen_load_anim does that later. */
+        s_idle_screen = lv_obj_create(NULL);
+
+        scr_idle_data_t idle = {
+            .unit_name  = PLACEHOLDER_UNIT_NAME,
+            .door_name  = PLACEHOLDER_DOOR_NAME,
+            .now        = PLACEHOLDER_NOW,
+            .now_date   = PLACEHOLDER_NOW_DATE,
+            .dnd        = false,
+            .has_unread = false,
+        };
+        stream_slot = scr_idle_build(s_idle_screen, &idle);
+
+        scr_ringing_data_t ring = {
+            .door_name = PLACEHOLDER_DOOR_NAME,
+        };
+        s_ringing_overlay = scr_ringing_build(s_idle_screen, &ring);
+        lv_obj_add_flag(s_ringing_overlay, LV_OBJ_FLAG_HIDDEN);
+
+        bsp_display_unlock();
+    }
+
+    scr_loading_set_status("Lade Stream");
+
     ESP_LOGI(TAG, "Initializing unifix-client ...");
     esp_err_t err = unifix_client_init();
     if (err == ESP_OK) {
@@ -103,9 +178,6 @@ static void on_got_ip(void)
             ESP_LOGW(TAG, "Heartbeat failed: %s (continuing anyway)",
                      esp_err_to_name(err));
         }
-
-        /* SSE-Listener startet auch wenn Heartbeat fehlt - Server
-         * koennte gerade neu starten, SSE macht eigenen Reconnect. */
         ESP_LOGI(TAG, "Starting SSE-Listener for /esp/events ...");
         err = sse_client_start("/esp/events", on_sse_event);
         if (err != ESP_OK) {
@@ -117,21 +189,39 @@ static void on_got_ip(void)
                  esp_err_to_name(err));
     }
 
-    /* Stream startet IMMER, unabhaengig vom unifix-Server-Status. */
     ESP_LOGI(TAG, "Starting stream pipeline ...");
-    stream_pipeline_start();
+    stream_pipeline_start(stream_slot);
+
+    /* Schedule the loading -> idle screen fade */
+    esp_timer_create_args_t fade_args = {
+        .callback = fade_to_idle_cb,
+        .name = "screen_fade",
+    };
+    esp_timer_handle_t fade_timer = NULL;
+    if (esp_timer_create(&fade_args, &fade_timer) == ESP_OK) {
+        esp_timer_start_once(fade_timer, LOADING_TO_IDLE_DELAY_MS * 1000);
+    }
 }
 
+
+/* ============================================================
+ * WLAN
+ * ============================================================ */
 static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
-        status_set("Verbinde mit %s ...", WIFI_SSID);
+        scr_loading_set_status("Verbinde WLAN");
         esp_wifi_connect();
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         if (s_retry < 10) {
             s_retry++;
-            status_set("Reconnect %d ...", s_retry);
+            char status[32];
+            snprintf(status, sizeof(status), "Reconnect %d", s_retry);
+            scr_loading_set_status(status);
             esp_wifi_connect();
+        } else {
+            scr_loading_set_status("Kein WLAN");
+            ESP_LOGE(TAG, "WLAN connect failed after 10 retries");
         }
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *e = (ip_event_got_ip_t *)data;
@@ -159,32 +249,10 @@ static void wifi_init(void)
     ESP_ERROR_CHECK(esp_wifi_start());
 }
 
-static void ui_init(void)
-{
-    if (!bsp_display_lock(0)) return;
-    lv_obj_t *scr = lv_screen_active();
-    lv_obj_set_style_bg_color(scr, lv_color_hex(0xFFFFFF), 0);
 
-    lv_obj_t *title = lv_label_create(scr);
-    lv_label_set_text(title, "KOENIGSLIGA");
-    lv_obj_set_style_text_color(title, lv_color_hex(0x111111), 0);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_26, 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 100);
-
-    lv_obj_t *sub = lv_label_create(scr);
-    lv_label_set_text(sub, "MJPEG Stream Receiver");
-    lv_obj_set_style_text_color(sub, lv_color_hex(0x666666), 0);
-    lv_obj_set_style_text_font(sub, &lv_font_montserrat_18, 0);
-    lv_obj_align(sub, LV_ALIGN_TOP_MID, 0, 150);
-
-    s_status_label = lv_label_create(scr);
-    lv_label_set_text(s_status_label, "Initialisiere ...");
-    lv_obj_set_style_text_color(s_status_label, lv_color_hex(0x333333), 0);
-    lv_obj_set_style_text_font(s_status_label, &lv_font_montserrat_22, 0);
-    lv_obj_align(s_status_label, LV_ALIGN_CENTER, 0, 0);
-    bsp_display_unlock();
-}
-
+/* ============================================================
+ * app_main
+ * ============================================================ */
 void app_main(void)
 {
     esp_err_t err = nvs_flash_init();
@@ -213,20 +281,22 @@ void app_main(void)
     bsp_display_start_with_config(&cfg);
     bsp_display_backlight_on();
 
-    ui_init();
+    /* Create + activate the loading screen first - replaces the
+     * default white LVGL background immediately. */
+    if (bsp_display_lock(200)) {
+        scr_loading_create();
+        bsp_display_unlock();
+    }
 
-    /*
-     * Setup-Mode-Check VOR wifi_init.
-     */
+    /* Setup mode check before WLAN */
     if (!device_token_has()) {
-        status_set("Setup-Modus - bitte Token einfuegen");
         ESP_LOGW(TAG, "No device_token in NVS, entering setup mode");
+        scr_loading_set_status("Setup-Modus");
         setup_mode_run();
-        /* Kehrt nicht zurueck (esp_restart) */
         return;
     }
 
     ESP_LOGI(TAG, "Device token present, starting normal boot");
-    status_set("Starte WLAN ...");
+    scr_loading_set_status("Starte");
     wifi_init();
 }
