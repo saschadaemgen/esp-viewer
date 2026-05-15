@@ -72,9 +72,9 @@ static void on_sse_event(const char *event_name, const char *data)
 {
     if (strcmp(event_name, "heartbeat") == 0) {
         ESP_LOGI(TAG, "[SSE] heartbeat: %s", data);
-    } else if (strcmp(event_name, "doorbell_start") == 0) {
+    } else if (strcmp(event_name, "doorbell.ring") == 0) {
         ESP_LOGW(TAG, "[SSE] >>> DOORBELL START <<< %s", data);
-    } else if (strcmp(event_name, "doorbell_cancel") == 0) {
+    } else if (strcmp(event_name, "doorbell.cancel") == 0) {
         ESP_LOGW(TAG, "[SSE] <<< DOORBELL CANCEL >>> %s", data);
     } else {
         ESP_LOGI(TAG, "[SSE] %s: %s", event_name, data);
