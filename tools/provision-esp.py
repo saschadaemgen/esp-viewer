@@ -2,11 +2,14 @@
 """
 provision-esp.py - NVS-Provisioning fuer ESP-Innenmonitor
 
-ESP-Saison 2 Tag 2
+ESP-Saison 2
 
-Schreibt einen Bearer-Token in die NVS-Partition des ESP32-P4
-via esptool. Der ESP liest den Token beim naechsten Boot aus
-NVS-Namespace "unifix", Key "device_token".
+Schreibt Bearer-Token + WLAN-Credentials in die NVS-Partition des
+ESP32-P4 via esptool. Der ESP liest beim naechsten Boot aus
+NVS-Namespace "unifix":
+  - "device_token"  -> Bearer-Token fuer unifix-Server-API
+  - "wifi_ssid"     -> SSID des WLAN
+  - "wifi_pwd"      -> Passwort fuer WLAN
 
 Voraussetzungen:
   - ESP-IDF aktiviert (export.ps1 / export.sh)
@@ -15,16 +18,26 @@ Voraussetzungen:
   - ESP-Geraet via USB verbunden (COM4 default auf Windows)
 
 Verwendung:
-  python tools/provision-esp.py <token> [--port COM4] [--erase]
+  python tools/provision-esp.py <token> [--ssid X --password Y] [--port COM4] [--erase]
 
-Beispiel:
+Beispiele:
+  # Nur Token (alte Verwendung, behaelt vorhandene WLAN-Config)
   python tools/provision-esp.py DwCR88Joi5KZ3yAUFKidRh__1WhN-fTINpSnrrn-St0
-  python tools/provision-esp.py <token> --port COM4 --erase
+
+  # Vollstaendige Provisionierung (empfohlen fuer neue Geraete)
+  python tools/provision-esp.py <token> --ssid SONCLOUD --password "MK..." --erase
+
+  # Nur WLAN aendern (Token muss schon vorhanden sein)
+  python tools/provision-esp.py "" --ssid neueSSID --password neuPass --erase
 
 Saison-2-Praxis:
-  Sascha generiert Token im unifix-Admin-CLI, kopiert hier rein.
-  Spaeter (Saison 14+): Master-Chat-CLI exportiert provisioning.json,
-  dieses Tool nimmt JSON-Input statt Plain-Token.
+  - Mit --erase wird die komplette NVS-Partition geloescht und neu
+    geschrieben. Empfohlen fuer Werkstatt-Provisioning.
+  - Ohne --erase werden vorhandene Werte ueberschrieben, andere
+    Keys (z.B. spaeter device_name) bleiben erhalten.
+
+Saison 14+: Master-Chat-CLI exportiert provisioning.json,
+            dieses Tool nimmt JSON-Input statt einzelne Argumente.
 """
 
 import argparse
@@ -43,9 +56,11 @@ PARTITIONS_CSV = PROJECT_ROOT / "partitions.csv"
 DEFAULT_NVS_OFFSET = 0x9000
 DEFAULT_NVS_SIZE = 0x6000
 
-# NVS-Eintrag-Definition
+# NVS-Eintrag-Definition (muss zu wifi_config.c und device_token.c passen)
 NVS_NAMESPACE = "unifix"
 NVS_KEY_TOKEN = "device_token"
+NVS_KEY_SSID  = "wifi_ssid"
+NVS_KEY_PWD   = "wifi_pwd"
 
 
 def find_nvs_partition():
@@ -102,9 +117,10 @@ def validate_token(token):
     Prueft den Token-String auf Base64URL-Format.
     Erlaubt: A-Z, a-z, 0-9, -, _
     Laenge: 1 bis 127 Zeichen
+    Leerer Token: erlaubt (Token soll nicht ueberschrieben werden)
     """
     if not token:
-        return False, "Token is empty"
+        return True, None  # leer = ueberspringen
     if len(token) > 127:
         return False, f"Token too long ({len(token)} chars, max 127)"
 
@@ -120,14 +136,45 @@ def validate_token(token):
     return True, None
 
 
-def create_nvs_csv(token, csv_path):
+def validate_ssid(ssid):
+    """SSID darf bis zu 31 Zeichen (Buffer 32 incl NUL)."""
+    if ssid is None:
+        return True, None
+    if len(ssid) == 0:
+        return False, "SSID is empty"
+    if len(ssid) > 31:
+        return False, f"SSID too long ({len(ssid)} chars, max 31)"
+    return True, None
+
+
+def validate_password(password):
+    """Password darf bis zu 63 Zeichen (Buffer 64 incl NUL).
+       Leerer String = offenes Netz, erlaubt."""
+    if password is None:
+        return True, None
+    if len(password) > 63:
+        return False, f"Password too long ({len(password)} chars, max 63)"
+    return True, None
+
+
+def create_nvs_csv(token, ssid, password, csv_path):
     """
-    Erzeugt eine NVS-CSV-Datei mit dem Token-Eintrag.
+    Erzeugt eine NVS-CSV-Datei mit dem Token + WLAN-Config.
+
+    Nur Felder die uebergeben wurden landen in der CSV. Leere Werte
+    werden ausgelassen damit existierende NVS-Eintraege erhalten
+    bleiben (vorausgesetzt --erase wurde nicht verwendet).
     """
     with open(csv_path, "w", newline="\n") as f:
         f.write("key,type,encoding,value\n")
         f.write(f"{NVS_NAMESPACE},namespace,,\n")
-        f.write(f"{NVS_KEY_TOKEN},data,string,{token}\n")
+        if token:
+            f.write(f"{NVS_KEY_TOKEN},data,string,{token}\n")
+        if ssid:
+            f.write(f"{NVS_KEY_SSID},data,string,{ssid}\n")
+        if password is not None:
+            # Passwort kann "" sein fuer offenes Netz -> trotzdem schreiben
+            f.write(f"{NVS_KEY_PWD},data,string,{password}\n")
 
 
 def generate_nvs_bin(csv_path, bin_path, nvs_size, nvs_gen_path):
@@ -192,9 +239,15 @@ def flash_nvs_bin(bin_path, offset, port, erase_first):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="ESP-Saison-2 Token-Provisioning via NVS-Partition-Flash",
+        description="ESP-Saison-2 Provisioning via NVS-Partition-Flash",
     )
-    parser.add_argument("token", help="Bearer-Token (Base64URL, max 127 chars)")
+    parser.add_argument("token", nargs="?", default="",
+                        help="Bearer-Token (Base64URL, max 127 chars). "
+                             "Leer lassen wenn nur WLAN geschrieben werden soll.")
+    parser.add_argument("--ssid", default=None,
+                        help="WLAN-SSID (max 31 Zeichen)")
+    parser.add_argument("--password", default=None,
+                        help="WLAN-Passwort (max 63 Zeichen, leer fuer offenes Netz)")
     parser.add_argument("--port", default="COM4",
                         help="Serial port (default: COM4)")
     parser.add_argument("--erase", action="store_true",
@@ -204,13 +257,41 @@ def main():
 
     args = parser.parse_args()
 
-    # Token validieren
-    ok, msg = validate_token(args.token)
-    if not ok:
-        print(f"ERROR: {msg}")
+    # Mindestens ein Wert muss gesetzt sein
+    if not args.token and not args.ssid and args.password is None:
+        print("ERROR: Mindestens token oder --ssid muss angegeben werden")
         return 1
 
-    print(f"Token length: {len(args.token)} chars (validated)")
+    # Wenn SSID gesetzt, muss auch Passwort gesetzt sein (oder explizit "")
+    if args.ssid and args.password is None:
+        print("ERROR: --ssid ohne --password ist nicht erlaubt")
+        print("       (fuer offenes Netz --password \"\" verwenden)")
+        return 1
+
+    # Validierungen
+    ok, msg = validate_token(args.token)
+    if not ok:
+        print(f"ERROR (token): {msg}")
+        return 1
+    ok, msg = validate_ssid(args.ssid)
+    if not ok:
+        print(f"ERROR (ssid): {msg}")
+        return 1
+    ok, msg = validate_password(args.password)
+    if not ok:
+        print(f"ERROR (password): {msg}")
+        return 1
+
+    # Status-Ausgabe (Passwort nur als Laenge!)
+    print(f"Provisioning summary:")
+    if args.token:
+        print(f"  Token:    {len(args.token)} chars")
+    if args.ssid:
+        print(f"  SSID:     {args.ssid}")
+    if args.password is not None:
+        print(f"  Password: {len(args.password)} chars")
+    print(f"  Port:     {args.port}")
+    print(f"  Erase:    {args.erase}")
 
     # nvs_partition_gen.py suchen
     nvs_gen = find_nvs_partition_gen()
@@ -229,7 +310,7 @@ def main():
 
     try:
         # CSV erzeugen
-        create_nvs_csv(args.token, csv_path)
+        create_nvs_csv(args.token, args.ssid, args.password, csv_path)
         print(f"Created CSV: {csv_path}")
 
         # NVS-Bin generieren
@@ -242,8 +323,8 @@ def main():
             return 1
 
         print("=" * 60)
-        print("  SUCCESS - Token written to NVS")
-        print("  Reset the ESP (or unplug/replug) to boot with token")
+        print("  SUCCESS - NVS provisioned")
+        print("  Reset the ESP (or unplug/replug) to boot with new config")
         print("=" * 60)
         return 0
 
