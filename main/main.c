@@ -1,22 +1,20 @@
 /*
  * main.c - KOENIGSLIGA UniFi-Display
  *
- * ESP-Saison 2 Tag 2: nach unifix_client-Integration
+ * ESP-Saison 2 Tag 3: nach SSE-Listener-Integration
  *
  * Aufgaben dieser Datei:
  *   - app_main() Entry: NVS, LVGL, Display-Init
  *   - Setup-Mode-Check: wenn kein Token in NVS -> setup_mode_run
  *   - WLAN-Initialisierung (wifi_init, wifi_event_handler)
- *   - Nach IP_GOT: unifix_client_init + heartbeat-Probe
- *   - Stream-Pipeline starten (KOENIGSLIGA-Saison-1-Verhalten,
- *     unabhaengig von Heartbeat-Erfolg)
- *   - Erste UI (ui_init, status_set)
+ *   - Nach IP_GOT:
+ *       unifix_client_init + heartbeat-Probe
+ *       sse_client_start fuer /esp/events
+ *       stream_pipeline_start (KOENIGSLIGA-Saison-1-Verhalten)
  *
- * Was NICHT mehr hier ist:
- *   - MJPEG-Stream-Pipeline -> stream_pipeline.c und .h
- *   - Token-NVS-Storage     -> services/device_token.c und .h
- *   - Setup-Modus           -> services/setup_mode.c und .h
- *   - HTTP-API-Client       -> services/unifix_client.c und .h
+ * Event-Callback:
+ *   on_sse_event() loggt aktuell nur. Tag 7+ wird das eine
+ *   Event-Queue an die FSM fuettern.
  */
 
 #include <string.h>
@@ -38,6 +36,7 @@
 #include "services/device_token.h"
 #include "services/setup_mode.h"
 #include "services/unifix_client.h"
+#include "services/sse_client.h"
 
 static const char *TAG = "KOENIG";
 
@@ -62,10 +61,34 @@ static void status_set(const char *fmt, ...)
 }
 
 /*
- * Beim ersten IP_GOT-Event: Heartbeat-Probe + Stream starten.
+ * Callback fuer SSE-Events vom unifix-Server.
  *
- * Heartbeat-Probe ist diagnostisch, NICHT blocker fuer Stream.
- * Saison-1-Verhalten bleibt erhalten: Stream startet immer.
+ * Tag 3: nur loggen.
+ * Tag 7+: Event-Queue an die FSM fuettern.
+ *
+ * Wird aus der sse_listener-Task aufgerufen. NICHT blockieren!
+ */
+static void on_sse_event(const char *event_name, const char *data)
+{
+    if (strcmp(event_name, "heartbeat") == 0) {
+        ESP_LOGI(TAG, "[SSE] heartbeat: %s", data);
+    } else if (strcmp(event_name, "doorbell_start") == 0) {
+        ESP_LOGW(TAG, "[SSE] >>> DOORBELL START <<< %s", data);
+    } else if (strcmp(event_name, "doorbell_cancel") == 0) {
+        ESP_LOGW(TAG, "[SSE] <<< DOORBELL CANCEL >>> %s", data);
+    } else {
+        ESP_LOGI(TAG, "[SSE] %s: %s", event_name, data);
+    }
+}
+
+/*
+ * Beim ersten IP_GOT-Event:
+ *   1. Heartbeat-Probe (diagnostisch)
+ *   2. SSE-Listener fuer /esp/events starten
+ *   3. Stream-Pipeline starten
+ *
+ * Saison-1-Verhalten erhalten: Stream startet IMMER.
+ * unifix-Client-Fehler sind nicht-blocker.
  */
 static void on_got_ip(void)
 {
@@ -80,13 +103,21 @@ static void on_got_ip(void)
             ESP_LOGW(TAG, "Heartbeat failed: %s (continuing anyway)",
                      esp_err_to_name(err));
         }
+
+        /* SSE-Listener startet auch wenn Heartbeat fehlt - Server
+         * koennte gerade neu starten, SSE macht eigenen Reconnect. */
+        ESP_LOGI(TAG, "Starting SSE-Listener for /esp/events ...");
+        err = sse_client_start("/esp/events", on_sse_event);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "SSE start failed: %s (continuing anyway)",
+                     esp_err_to_name(err));
+        }
     } else {
         ESP_LOGW(TAG, "unifix-client init failed: %s (continuing anyway)",
                  esp_err_to_name(err));
     }
 
-    /* Stream startet IMMER, unabhaengig vom Heartbeat-Ergebnis.
-     * Damit erhalten wir Saison-1-Verhalten als Sicherheits-Netz. */
+    /* Stream startet IMMER, unabhaengig vom unifix-Server-Status. */
     ESP_LOGI(TAG, "Starting stream pipeline ...");
     stream_pipeline_start();
 }
