@@ -1,16 +1,17 @@
 /*
  * stream_pipeline.c - MJPEG-Stream-Receiver Pipeline
  *
- * KOENIGSLIGA UniFi-Display, ESP-Saison 2 Tag 1
+ * KOENIGSLIGA UniFi-Display
  *
- * Extrahiert aus main.c (Saison 1, 10. Mai 2026, 11 fps stabil).
- * REINES REFACTORING - keine Logik-Aenderung.
+ * v3: pipeline migrated from RGB565 to RGB888 for the full
+ *     24-bit color path (no more banding). Canvas grew from
+ *     2MB to 3MB, JPEG decoder outputs RGB888 directly.
+ *     Requires LV_COLOR_DEPTH=24 and BSP RGB888 in menuconfig.
  *
- * Verifiziert:
- *   - 23.500+ Frames stabil ueber 36+ Minuten in Saison 1
- *   - Hardware-JPEG-Decoder dec=10ms pro Frame
- *   - RGB565 BGR-Order korrekt
- *   - LVGL Triple-Buffer + Avoid-Tear
+ * v2: canvas is now embedded inside a caller-provided parent
+ * object (the .stream slot of the idle screen) instead of
+ * clearing the whole screen. The screen layout (topbar / stream /
+ * actions) stays intact, frames render inside the stream frame.
  */
 
 #include "stream_pipeline.h"
@@ -38,14 +39,14 @@
 static const char *TAG = "STREAM";
 
 /*
- * Stream-Endpoint-Konstanten
- * Saison 2 Spaeter: kommen aus /esp/config vom unifix-Server.
+ * Stream endpoint constants
+ * Saison 2+: will come from /esp/config on the unifix server.
  */
 #define MJPEG_HOST      "192.168.1.42"
 #define MJPEG_PORT      1984
 #define MJPEG_PATH      "/api/stream.mjpeg?src=intercom_mjpeg"
 
-/* JPEG/Canvas-Buffer */
+/* JPEG / canvas buffers */
 static uint8_t *s_jpeg_buf = NULL;
 static size_t s_jpeg_buf_capacity = 1024 * 1024;
 
@@ -54,6 +55,7 @@ static size_t s_canvas_size = 0;
 
 static jpeg_decoder_handle_t s_jpeg_engine = NULL;
 static lv_obj_t *s_video_canvas = NULL;
+static lv_obj_t *s_canvas_parent = NULL;
 
 static void mjpeg_task(void *arg)
 {
@@ -67,7 +69,7 @@ static void mjpeg_task(void *arg)
     s_jpeg_buf_capacity = jpeg_actual;
     ESP_LOGI(TAG, "JPEG buffer: %d bytes", (int)jpeg_actual);
 
-    s_canvas_size = 800 * 1280 * 2;
+    s_canvas_size = 800 * 1280 * 3;
     size_t cl = 64;
     s_canvas_size = (s_canvas_size + cl - 1) & ~(cl - 1);
 
@@ -89,13 +91,18 @@ static void mjpeg_task(void *arg)
         return;
     }
 
+    /*
+     * Create the video canvas inside the parent provided by main.c.
+     * Parent is the .stream slot of the idle screen (radius 22,
+     * dark bg, hairline border). We fill it entirely; clip_corner
+     * on the parent keeps the rounded corners.
+     */
     if (bsp_display_lock(100)) {
-        lv_obj_t *scr = lv_screen_active();
-        lv_obj_clean(scr);
-        lv_obj_set_style_bg_color(scr, lv_color_hex(0x000000), 0);
-        s_video_canvas = lv_canvas_create(scr);
-        lv_canvas_set_buffer(s_video_canvas, s_canvas_buf, 800, 1280, LV_COLOR_FORMAT_RGB565);
-        lv_obj_align(s_video_canvas, LV_ALIGN_CENTER, 0, 0);
+        lv_obj_t *parent = s_canvas_parent ? s_canvas_parent : lv_screen_active();
+        s_video_canvas = lv_canvas_create(parent);
+        lv_canvas_set_buffer(s_video_canvas, s_canvas_buf, 800, 1280, LV_COLOR_FORMAT_RGB888);
+        lv_obj_set_size(s_video_canvas, lv_pct(100), lv_pct(100));
+        lv_obj_center(s_video_canvas);
         bsp_display_unlock();
     }
 
@@ -216,11 +223,11 @@ static void mjpeg_task(void *arg)
                 if (he) {
                     char tmp = *he;
                     *he = 0;
-                    char *cl = strstr((char *)recv_buf + skip, "Content-Length:");
-                    if (cl) {
-                        cl += 15;
-                        while (*cl == ' ') cl++;
-                        content_length = atoi(cl);
+                    char *cl_str = strstr((char *)recv_buf + skip, "Content-Length:");
+                    if (cl_str) {
+                        cl_str += 15;
+                        while (*cl_str == ' ') cl_str++;
+                        content_length = atoi(cl_str);
                     }
                     *he = tmp;
                     skip = (he - (char *)recv_buf) + 4;
@@ -259,7 +266,7 @@ static void mjpeg_task(void *arg)
             }
 
             jpeg_decode_cfg_t dec_cfg = {
-                .output_format = JPEG_DECODE_OUT_FORMAT_RGB565,
+                .output_format = JPEG_DECODE_OUT_FORMAT_RGB888,
                 .rgb_order = JPEG_DEC_RGB_ELEMENT_ORDER_BGR,
             };
             uint32_t out_size = 0;
@@ -300,7 +307,8 @@ reconnect:
     }
 }
 
-void stream_pipeline_start(void)
+void stream_pipeline_start(lv_obj_t *parent)
 {
+    s_canvas_parent = parent;
     xTaskCreatePinnedToCore(mjpeg_task, "mjpeg", 16384, NULL, 5, NULL, 0);
 }

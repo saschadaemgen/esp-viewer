@@ -1,40 +1,47 @@
 /*
  * stream_pipeline.h - MJPEG-Stream-Receiver Pipeline
  *
- * KOENIGSLIGA UniFi-Display, ESP-Saison 2 Tag 1
+ * KOENIGSLIGA UniFi-Display
  *
- * Diese Komponente kapselt die komplette Saison-1-MJPEG-Pipeline:
- *   - JPEG-Decoder-Engine (Hardware, esp_driver_jpeg)
- *   - HTTP-MJPEG-Receiver (multipart/x-mixed-replace Parser)
- *   - LVGL-Canvas-Anzeige
+ * Encapsulates the complete Saison-1 MJPEG pipeline:
+ *   - JPEG decoder engine (hardware, esp_driver_jpeg)
+ *   - HTTP MJPEG receiver (multipart/x-mixed-replace parser)
+ *   - LVGL canvas display
  *
- * Saison 2 Spaeter:
- *   - stream_pipeline_stop() + _start() je nach FSM-State
- *   - Konfigurierbarer Host/Port/Path via /esp/config
- *   - Bearer-Token-Header
+ * Saison 2 update: canvas is created inside a caller-provided
+ * parent object (the .stream slot of the idle screen) so the
+ * video frames render inside the web-viewer-style frame.
  */
 
 #pragma once
+
+#include "lvgl.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /**
- * Startet die MJPEG-Stream-Pipeline.
+ * Start the MJPEG stream pipeline.
  *
- * Voraussetzung: WLAN-Verbindung steht (IP_EVENT_STA_GOT_IP).
+ * Preconditions:
+ *   - WLAN connection up (IP_EVENT_STA_GOT_IP fired)
+ *   - LVGL display initialised
  *
- * Verhalten:
- *   - Allokiert JPEG-In-Buffer (1 MB) und Canvas-Out-Buffer (800x1280 RGB565)
- *   - Initialisiert JPEG-Decoder-Engine
- *   - Loescht den aktuellen LVGL-Screen und legt ein Video-Canvas drauf
- *   - Spawned eine FreeRTOS-Task auf Core 0 die forever den Stream
- *     holt, dekodiert und ans Canvas zeichnet
+ * Behaviour:
+ *   - Allocates JPEG input buffer (1 MB) and canvas output buffer
+ *     (800x1280 RGB565)
+ *   - Initialises hardware JPEG decoder engine
+ *   - Creates an lv_canvas as child of `parent` filling its area
+ *   - Spawns a FreeRTOS task on core 0 that fetches, decodes and
+ *     blits frames to the canvas forever
  *
- * Diese Funktion blockiert NICHT - sie spawned nur die Task und kehrt zurueck.
+ * @param parent  LVGL parent object the canvas is created in.
+ *                Typically the .stream slot returned from
+ *                scr_idle_build(). If NULL, lv_screen_active()
+ *                is used as fallback (Saison-1 behaviour).
  */
-void stream_pipeline_start(void);
+void stream_pipeline_start(lv_obj_t *parent);
 
 #ifdef __cplusplus
 }
