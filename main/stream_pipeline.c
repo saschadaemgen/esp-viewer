@@ -3,6 +3,11 @@
  *
  * KOENIGSLIGA UniFi-Display
  *
+ * v5: aggressive backlog skip. Nach jedem Frame: solange noch
+ *     Bytes im TCP-Buffer warten und der naechste Frame schon
+ *     komplett empfangbar ist, skippe ohne Decode. ESP entscheidet
+ *     pro Frame neu, decodiert nur den AKTUELLSTEN Frame im Buffer.
+ *
  * v3: pipeline migrated from RGB565 to RGB888 for the full
  *     24-bit color path (no more banding). Canvas grew from
  *     2MB to 3MB, JPEG decoder outputs RGB888 directly.
@@ -10,14 +15,14 @@
  *
  * v2: canvas is now embedded inside a caller-provided parent
  * object (the .stream slot of the idle screen) instead of
- * clearing the whole screen. The screen layout (topbar / stream /
- * actions) stays intact, frames render inside the stream frame.
+ * clearing the whole screen.
  */
 
 #include "stream_pipeline.h"
 
 #include <string.h>
 #include <stdio.h>
+#include <sys/ioctl.h>
 
 #include "esp_log.h"
 #include "esp_err.h"
@@ -38,13 +43,9 @@
 
 static const char *TAG = "STREAM";
 
-/*
- * Stream endpoint constants
- * Saison 2+: will come from /esp/config on the unifix server.
- */
 #define MJPEG_HOST      "192.168.1.42"
 #define MJPEG_PORT      1984
-#define MJPEG_PATH      "/api/stream.mjpeg?src=intercom_mjpeg"
+#define MJPEG_PATH      "/api/stream.mjpeg?src=intercom_esp"
 
 /* JPEG / canvas buffers */
 static uint8_t *s_jpeg_buf = NULL;
@@ -56,6 +57,102 @@ static size_t s_canvas_size = 0;
 static jpeg_decoder_handle_t s_jpeg_engine = NULL;
 static lv_obj_t *s_video_canvas = NULL;
 static lv_obj_t *s_canvas_parent = NULL;
+
+/*
+ * Parse one MJPEG frame from the stream and write the JPEG payload
+ * into out_jpeg. Returns the content_length on success or -1 on error.
+ * Reads from socket as needed. recv_buf/buf_len are the persistent
+ * receive buffer state.
+ */
+static int read_next_frame(int sock, uint8_t *recv_buf, size_t recv_buf_size,
+                           size_t *buf_len_io, const char *boundary,
+                           uint8_t *out_jpeg, size_t out_jpeg_cap)
+{
+    size_t buf_len = *buf_len_io;
+
+    char marker[80];
+    snprintf(marker, sizeof(marker), "--%s", boundary);
+    size_t marker_len = strlen(marker);
+
+    /* Find the boundary marker */
+    char *bpos = NULL;
+    while (1) {
+        bpos = (char *)memmem(recv_buf, buf_len, marker, marker_len);
+        if (bpos) break;
+        if (buf_len > recv_buf_size - 4096) {
+            memmove(recv_buf, recv_buf + buf_len - 256, 256);
+            buf_len = 256;
+        }
+        int n = recv(sock, recv_buf + buf_len, recv_buf_size - buf_len, 0);
+        if (n <= 0) { *buf_len_io = buf_len; return -1; }
+        buf_len += n;
+    }
+
+    size_t skip = (bpos - (char *)recv_buf) + marker_len;
+    while (skip + 2 > buf_len) {
+        int n = recv(sock, recv_buf + buf_len, recv_buf_size - buf_len, 0);
+        if (n <= 0) { *buf_len_io = buf_len; return -1; }
+        buf_len += n;
+    }
+    if (recv_buf[skip] == '\r') skip++;
+    if (recv_buf[skip] == '\n') skip++;
+
+    /* Parse Content-Length header */
+    int content_length = -1;
+    while (1) {
+        char *he = (char *)memmem(recv_buf + skip, buf_len - skip, "\r\n\r\n", 4);
+        if (he) {
+            char tmp = *he;
+            *he = 0;
+            char *cl_str = strstr((char *)recv_buf + skip, "Content-Length:");
+            if (cl_str) {
+                cl_str += 15;
+                while (*cl_str == ' ') cl_str++;
+                content_length = atoi(cl_str);
+            }
+            *he = tmp;
+            skip = (he - (char *)recv_buf) + 4;
+            break;
+        }
+        int n = recv(sock, recv_buf + buf_len, recv_buf_size - buf_len, 0);
+        if (n <= 0) { *buf_len_io = buf_len; return -1; }
+        buf_len += n;
+    }
+
+    if (content_length <= 0 || content_length > (int)out_jpeg_cap) {
+        ESP_LOGW(TAG, "Bad content-length: %d", content_length);
+        *buf_len_io = buf_len;
+        return -1;
+    }
+
+    /* Copy whatever JPEG bytes are already in recv_buf */
+    size_t already = buf_len - skip;
+    if (already > (size_t)content_length) already = content_length;
+    memcpy(out_jpeg, recv_buf + skip, already);
+
+    /* Receive the rest directly into out_jpeg */
+    size_t need = content_length - already;
+    size_t got = already;
+    while (need > 0) {
+        int n = recv(sock, out_jpeg + got, need, 0);
+        if (n <= 0) { *buf_len_io = buf_len; return -1; }
+        got += n;
+        need -= n;
+    }
+
+    /* Shift any leftover bytes (start of next frame) to front of recv_buf */
+    size_t consumed = skip + content_length;
+    if (consumed < buf_len) {
+        size_t rest = buf_len - consumed;
+        memmove(recv_buf, recv_buf + consumed, rest);
+        buf_len = rest;
+    } else {
+        buf_len = 0;
+    }
+
+    *buf_len_io = buf_len;
+    return content_length;
+}
 
 static void mjpeg_task(void *arg)
 {
@@ -91,12 +188,6 @@ static void mjpeg_task(void *arg)
         return;
     }
 
-    /*
-     * Create the video canvas inside the parent provided by main.c.
-     * Parent is the .stream slot of the idle screen (radius 22,
-     * dark bg, hairline border). We fill it entirely; clip_corner
-     * on the parent keeps the rounded corners.
-     */
     if (bsp_display_lock(100)) {
         lv_obj_t *parent = s_canvas_parent ? s_canvas_parent : lv_screen_active();
         s_video_canvas = lv_canvas_create(parent);
@@ -110,6 +201,14 @@ static void mjpeg_task(void *arg)
     uint8_t *recv_buf = heap_caps_malloc(recv_buf_size, MALLOC_CAP_SPIRAM);
     if (!recv_buf) {
         ESP_LOGE(TAG, "recv_buf alloc failed");
+        vTaskDelete(NULL);
+        return;
+    }
+
+    /* Scratch buffer to dump skipped frames into (so we can read+discard) */
+    uint8_t *skip_buf = heap_caps_malloc(s_jpeg_buf_capacity, MALLOC_CAP_SPIRAM);
+    if (!skip_buf) {
+        ESP_LOGE(TAG, "skip_buf alloc failed");
         vTaskDelete(NULL);
         return;
     }
@@ -186,85 +285,44 @@ static void mjpeg_task(void *arg)
         }
 
         int frame_count = 0;
+        int skipped_count = 0;
         int64_t start_us = esp_timer_get_time();
         int64_t last_log_us = start_us;
         int last_dec_ms = 0;
         int last_jpeg_size = 0;
 
         while (1) {
-            char marker[80];
-            snprintf(marker, sizeof(marker), "--%s", boundary);
-            size_t marker_len = strlen(marker);
+            /* Read next frame into s_jpeg_buf */
+            int content_length = read_next_frame(sock, recv_buf, recv_buf_size,
+                                                  &buf_len, boundary,
+                                                  s_jpeg_buf, s_jpeg_buf_capacity);
+            if (content_length < 0) goto reconnect;
 
-            char *bpos = NULL;
-            while (1) {
-                bpos = (char *)memmem(recv_buf, buf_len, marker, marker_len);
-                if (bpos) break;
-                if (buf_len > recv_buf_size - 4096) {
-                    memmove(recv_buf, recv_buf + buf_len - 256, 256);
-                    buf_len = 256;
-                }
-                int n = recv(sock, recv_buf + buf_len, recv_buf_size - buf_len, 0);
-                if (n <= 0) goto reconnect;
-                buf_len += n;
-            }
-            size_t skip = (bpos - (char *)recv_buf) + marker_len;
-            while (skip + 2 > buf_len) {
-                int n = recv(sock, recv_buf + buf_len, recv_buf_size - buf_len, 0);
-                if (n <= 0) goto reconnect;
-                buf_len += n;
-            }
-            if (recv_buf[skip] == '\r') skip++;
-            if (recv_buf[skip] == '\n') skip++;
-
-            int content_length = -1;
-            while (1) {
-                char *he = (char *)memmem(recv_buf + skip, buf_len - skip, "\r\n\r\n", 4);
-                if (he) {
-                    char tmp = *he;
-                    *he = 0;
-                    char *cl_str = strstr((char *)recv_buf + skip, "Content-Length:");
-                    if (cl_str) {
-                        cl_str += 15;
-                        while (*cl_str == ' ') cl_str++;
-                        content_length = atoi(cl_str);
-                    }
-                    *he = tmp;
-                    skip = (he - (char *)recv_buf) + 4;
-                    break;
-                }
-                int n = recv(sock, recv_buf + buf_len, recv_buf_size - buf_len, 0);
-                if (n <= 0) goto reconnect;
-                buf_len += n;
+            /*
+             * AGGRESSIVE BACKLOG SKIP:
+             * Solange noch nennenswert Bytes im TCP-Buffer warten
+             * (> 1/4 Frame), bedeutet das: ein weiterer Frame ist
+             * teilweise oder ganz angekommen. Wir verwerfen den
+             * gerade gelesenen Frame OHNE Decode und lesen den
+             * naechsten. So saugt der ESP den Buffer leer bis nur
+             * noch der aktuellste Frame uebrig ist.
+             */
+            int pending = 0;
+            int skip_quarter = content_length / 4;
+            while (ioctl(sock, FIONREAD, &pending) == 0 &&
+                   pending > skip_quarter) {
+                int n = read_next_frame(sock, recv_buf, recv_buf_size,
+                                         &buf_len, boundary,
+                                         skip_buf, s_jpeg_buf_capacity);
+                if (n < 0) goto reconnect;
+                skipped_count++;
+                /* Copy newest skipped frame into s_jpeg_buf in case
+                 * the loop ends and we decode this one. */
+                memcpy(s_jpeg_buf, skip_buf, n);
+                content_length = n;
             }
 
-            if (content_length <= 0 || content_length > (int)s_jpeg_buf_capacity) {
-                ESP_LOGW(TAG, "Bad content-length: %d", content_length);
-                goto reconnect;
-            }
-
-            size_t already = buf_len - skip;
-            if (already > (size_t)content_length) already = content_length;
-            memcpy(s_jpeg_buf, recv_buf + skip, already);
-
-            size_t need = content_length - already;
-            size_t got = already;
-            while (need > 0) {
-                int n = recv(sock, s_jpeg_buf + got, need, 0);
-                if (n <= 0) goto reconnect;
-                got += n;
-                need -= n;
-            }
-
-            size_t consumed = skip + content_length;
-            if (consumed < buf_len) {
-                size_t rest = buf_len - consumed;
-                memmove(recv_buf, recv_buf + consumed, rest);
-                buf_len = rest;
-            } else {
-                buf_len = 0;
-            }
-
+            /* Decode the latest frame */
             jpeg_decode_cfg_t dec_cfg = {
                 .output_format = JPEG_DECODE_OUT_FORMAT_RGB888,
                 .rgb_order = JPEG_DEC_RGB_ELEMENT_ORDER_BGR,
@@ -295,8 +353,8 @@ static void mjpeg_task(void *arg)
             if (now_us - last_log_us > 1000000) {
                 float secs = (now_us - start_us) / 1000000.0;
                 float fps = frame_count / secs;
-                ESP_LOGI(TAG, "fps=%.1f  dec=%dms  frames=%d  jpeg=%d KB",
-                    fps, last_dec_ms, frame_count, last_jpeg_size / 1024);
+                ESP_LOGI(TAG, "fps=%.1f  dec=%dms  frames=%d  skipped=%d  jpeg=%d KB",
+                    fps, last_dec_ms, frame_count, skipped_count, last_jpeg_size / 1024);
                 last_log_us = now_us;
             }
         }
