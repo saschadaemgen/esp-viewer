@@ -211,10 +211,17 @@ static void on_sse_event(const char *event_name, const char *data)
             ESP_LOGW(TAG, "doorbell.ring: failed to parse JSON");
         }
 
-        if (s_ringing_overlay && bsp_display_lock(50)) {
-            lv_obj_clear_flag(s_ringing_overlay, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_move_foreground(s_ringing_overlay);
-            bsp_display_unlock();
+        if (s_ringing_overlay) {
+            if (bsp_display_lock(200)) {
+                lv_obj_clear_flag(s_ringing_overlay, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_move_foreground(s_ringing_overlay);
+                bsp_display_unlock();
+                ESP_LOGI(TAG, "Ringing overlay shown");
+            } else {
+                ESP_LOGW(TAG, "Ringing show: display_lock timeout");
+            }
+        } else {
+            ESP_LOGE(TAG, "Ringing show: overlay is NULL");
         }
         return;
     }
@@ -222,9 +229,14 @@ static void on_sse_event(const char *event_name, const char *data)
     if (strcmp(event_name, "doorbell.cancel") == 0) {
         ESP_LOGW(TAG, "[SSE] <<< DOORBELL CANCEL >>> %s", data);
         s_active_cancel_token[0] = 0;
-        if (s_ringing_overlay && bsp_display_lock(50)) {
-            lv_obj_add_flag(s_ringing_overlay, LV_OBJ_FLAG_HIDDEN);
-            bsp_display_unlock();
+        if (s_ringing_overlay) {
+            if (bsp_display_lock(200)) {
+                lv_obj_add_flag(s_ringing_overlay, LV_OBJ_FLAG_HIDDEN);
+                bsp_display_unlock();
+                ESP_LOGI(TAG, "Ringing overlay hidden");
+            } else {
+                ESP_LOGW(TAG, "Ringing hide: display_lock timeout");
+            }
         }
         return;
     }
@@ -296,6 +308,8 @@ static void on_got_ip(void)
         scr_ringing_set_reject_handler(s_ringing_overlay, on_reject_click, NULL);
 
         bsp_display_unlock();
+        ESP_LOGI(TAG, "Idle screen + ringing overlay built (overlay=%p)",
+                 (void *)s_ringing_overlay);
     }
 
     scr_loading_set_status("Lade Stream");
