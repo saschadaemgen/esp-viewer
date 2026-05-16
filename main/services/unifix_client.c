@@ -1,7 +1,5 @@
 /*
  * unifix_client.c - HTTP-Client Implementation
- *
- * ESP-Saison 2 Tag 2
  */
 
 #include "unifix_client.h"
@@ -168,6 +166,80 @@ esp_err_t unifix_client_heartbeat(void)
     }
     if (status < 200 || status >= 300) {
         ESP_LOGE(TAG, "Heartbeat: bad status %d", status);
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+
+    return ESP_OK;
+}
+
+esp_err_t unifix_client_reject(const char *event_id)
+{
+    if (!s_token_loaded) {
+        ESP_LOGE(TAG, "Client not initialized");
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (!event_id || event_id[0] == 0) {
+        ESP_LOGE(TAG, "reject: empty event_id");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    char url[128];
+    snprintf(url, sizeof(url), "%s/esp/reject", UNIFIX_BASE_URL);
+
+    char body[256];
+    int body_len = snprintf(body, sizeof(body),
+                            "{\"event_id\":\"%s\"}", event_id);
+    if (body_len < 0 || body_len >= (int)sizeof(body)) {
+        ESP_LOGE(TAG, "reject: body buffer too small");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    char auth_header[DEVICE_TOKEN_MAX_LEN + 16];
+    build_auth_header(auth_header, sizeof(auth_header));
+
+    esp_http_client_config_t config = {
+        .url = url,
+        .method = HTTP_METHOD_POST,
+        .timeout_ms = HTTP_TIMEOUT_MS,
+        .event_handler = http_event_handler,
+        .disable_auto_redirect = true,
+    };
+
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    if (!client) {
+        ESP_LOGE(TAG, "esp_http_client_init failed");
+        return ESP_FAIL;
+    }
+
+    esp_http_client_set_header(client, "Authorization", auth_header);
+    esp_http_client_set_header(client, "Content-Type", "application/json");
+    esp_http_client_set_header(client, "Accept", "application/json");
+    esp_http_client_set_post_field(client, body, body_len);
+
+    /* Auth-Header sofort aus Stack ueberschreiben (Defense in Depth) */
+    memset(auth_header, 0, sizeof(auth_header));
+
+    s_response_len = 0;
+    s_response_buf[0] = 0;
+
+    esp_err_t err = esp_http_client_perform(client);
+    int status = esp_http_client_get_status_code(client);
+    esp_http_client_cleanup(client);
+
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Reject HTTP failed: %s", esp_err_to_name(err));
+        return ESP_FAIL;
+    }
+
+    ESP_LOGI(TAG, "Reject status=%d, body='%.*s'",
+             status, (int)s_response_len, s_response_buf);
+
+    if (status == 401) {
+        ESP_LOGE(TAG, "Reject: Unauthorized (token rejected)");
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    if (status < 200 || status >= 300) {
+        ESP_LOGE(TAG, "Reject: bad status %d", status);
         return ESP_ERR_INVALID_RESPONSE;
     }
 
