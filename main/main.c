@@ -1,9 +1,7 @@
 /*
  * main.c - KOENIGSLIGA UniFi-Display
  *
- * ESP-Saison 2: Loading-Screen v2
- *
- * Architecture (FIXED after dangling-pointer crash):
+ * Architecture:
  *   - Loading screen is an OWN lv_obj_t (created with lv_obj_create(NULL))
  *   - Idle screen is ANOTHER own lv_obj_t (created the same way)
  *   - LVGL switches between them with lv_screen_load_anim - no shared
@@ -20,12 +18,20 @@
  *      - status = "Verbunden"
  *      - Build idle screen on its own handle (NOT active yet)
  *      - Build ringing overlay on the idle screen (hidden)
+ *      - Wire reject button click handler
  *      - status = "Lade Stream"
  *      - unifix_client_init + heartbeat
+ *      - Create unifix action queue + worker task
  *      - SSE listener
  *      - stream_pipeline_start(stream_slot)
  *      - 500ms later: lv_screen_load_anim(idle_screen, FADE, 400ms)
- *        LVGL fades loading out and idle in. No code in our hands.
+ *
+ * Unifix-Action-Dispatch:
+ *   - User-clicks on ringing overlay get an "optimistic UI" treatment:
+ *     overlay hides immediately, request is enqueued for the worker.
+ *   - unifix_action_worker is a permanent FreeRTOS task that drains the
+ *     queue and runs the corresponding HTTP call (reject, answer, unlock).
+ *   - This keeps HTTP latency off the LVGL thread.
  */
 
 #include <string.h>
@@ -38,6 +44,12 @@
 #include "esp_netif.h"
 #include "esp_event.h"
 #include "esp_timer.h"
+
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/queue.h"
+
+#include "cJSON.h"
 
 #include "lvgl.h"
 #include "bsp/esp-bsp.h"
@@ -67,9 +79,105 @@ static const char *TAG = "KOENIG";
 #define LOADING_TO_IDLE_DELAY_MS  500
 #define SCREEN_FADE_DURATION_MS   400
 
+#define CANCEL_TOKEN_BUF_SIZE     64
+#define UNIFIX_QUEUE_DEPTH        4
+#define UNIFIX_WORKER_STACK       4096
+#define UNIFIX_WORKER_PRIO        5
+#define UNIFIX_WORKER_CORE        1
+
 static int s_retry = 0;
 static lv_obj_t *s_ringing_overlay = NULL;
 static lv_obj_t *s_idle_screen     = NULL;
+
+/*
+ * Active cancel_token from the most recent SSE doorbell.ring event.
+ * Cleared on doorbell.cancel. Read by the reject click handler.
+ *
+ * Race-Condition note: SSE task writes, LVGL task reads. In practice
+ * there is no overlap: SSE writes once at ring time, then sits idle
+ * until the user reacts. LVGL reads only on click, after the user
+ * has seen the overlay. We accept the theoretical race without a mutex.
+ */
+static char s_active_cancel_token[CANCEL_TOKEN_BUF_SIZE] = {0};
+
+
+/* ============================================================
+ * Unifix-Action-Worker
+ *
+ * Single permanent FreeRTOS task that drains a queue of pending
+ * unifix-API actions and executes the corresponding HTTP call.
+ * Keeps HTTP latency off the LVGL thread.
+ * ============================================================ */
+typedef enum {
+    UNIFIX_ACTION_REJECT,
+    /* UNIFIX_ACTION_ANSWER, UNIFIX_ACTION_UNLOCK -> spaeter */
+} unifix_action_t;
+
+typedef struct {
+    unifix_action_t action;
+    char event_id[CANCEL_TOKEN_BUF_SIZE];
+} unifix_request_t;
+
+static QueueHandle_t s_unifix_action_queue = NULL;
+
+static void unifix_action_worker(void *arg)
+{
+    (void)arg;
+    unifix_request_t req;
+
+    ESP_LOGI(TAG, "Unifix action worker running");
+
+    while (1) {
+        if (xQueueReceive(s_unifix_action_queue, &req, portMAX_DELAY) != pdTRUE) {
+            continue;
+        }
+        switch (req.action) {
+        case UNIFIX_ACTION_REJECT:
+            ESP_LOGI(TAG, "Worker: dispatching REJECT");
+            unifix_client_reject(req.event_id);
+            break;
+        default:
+            ESP_LOGW(TAG, "Worker: unknown action %d", req.action);
+            break;
+        }
+        /* Wipe the buffer so the token does not linger in RAM. */
+        memset(&req, 0, sizeof(req));
+    }
+}
+
+
+/* ============================================================
+ * Reject button click handler
+ *
+ * Runs on the LVGL task. Hides the overlay immediately for
+ * snappy UX, then enqueues the REJECT request for the worker.
+ * ============================================================ */
+static void on_reject_click(lv_event_t *e)
+{
+    (void)e;
+    ESP_LOGI(TAG, "Reject button pressed");
+
+    /* Optimistic UI: hide the overlay immediately */
+    if (s_ringing_overlay) {
+        lv_obj_add_flag(s_ringing_overlay, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    if (s_active_cancel_token[0] == 0) {
+        ESP_LOGW(TAG, "Reject: no active cancel_token, skipping POST");
+        return;
+    }
+    if (!s_unifix_action_queue) {
+        ESP_LOGE(TAG, "Reject: action queue not ready");
+        return;
+    }
+
+    unifix_request_t req = { .action = UNIFIX_ACTION_REJECT };
+    snprintf(req.event_id, sizeof(req.event_id), "%s", s_active_cancel_token);
+
+    if (xQueueSend(s_unifix_action_queue, &req, 0) != pdTRUE) {
+        ESP_LOGE(TAG, "Reject: action queue full");
+    }
+}
 
 
 /* ============================================================
@@ -84,6 +192,25 @@ static void on_sse_event(const char *event_name, const char *data)
 
     if (strcmp(event_name, "doorbell.ring") == 0) {
         ESP_LOGW(TAG, "[SSE] >>> DOORBELL RING <<< %s", data);
+
+        /* Parse cancel_token from event data */
+        cJSON *json = cJSON_Parse(data);
+        if (json) {
+            cJSON *token = cJSON_GetObjectItem(json, "cancel_token");
+            if (cJSON_IsString(token) && token->valuestring) {
+                strncpy(s_active_cancel_token, token->valuestring,
+                        sizeof(s_active_cancel_token) - 1);
+                s_active_cancel_token[sizeof(s_active_cancel_token) - 1] = 0;
+                ESP_LOGI(TAG, "cancel_token captured (%d chars)",
+                         (int)strlen(s_active_cancel_token));
+            } else {
+                ESP_LOGW(TAG, "doorbell.ring: cancel_token missing or not a string");
+            }
+            cJSON_Delete(json);
+        } else {
+            ESP_LOGW(TAG, "doorbell.ring: failed to parse JSON");
+        }
+
         if (s_ringing_overlay && bsp_display_lock(50)) {
             lv_obj_clear_flag(s_ringing_overlay, LV_OBJ_FLAG_HIDDEN);
             lv_obj_move_foreground(s_ringing_overlay);
@@ -94,6 +221,7 @@ static void on_sse_event(const char *event_name, const char *data)
 
     if (strcmp(event_name, "doorbell.cancel") == 0) {
         ESP_LOGW(TAG, "[SSE] <<< DOORBELL CANCEL >>> %s", data);
+        s_active_cancel_token[0] = 0;
         if (s_ringing_overlay && bsp_display_lock(50)) {
             lv_obj_add_flag(s_ringing_overlay, LV_OBJ_FLAG_HIDDEN);
             bsp_display_unlock();
@@ -133,7 +261,9 @@ static void fade_to_idle_cb(void *arg)
 /* ============================================================
  * On IP got: build idle screen on its own handle (not active yet),
  *            build ringing overlay on top of idle,
- *            start stream + SSE, then schedule the fade.
+ *            wire click handlers,
+ *            start unifix worker + SSE + stream pipeline,
+ *            then schedule the fade.
  * ============================================================ */
 static void on_got_ip(void)
 {
@@ -162,6 +292,9 @@ static void on_got_ip(void)
         s_ringing_overlay = scr_ringing_build(s_idle_screen, &ring);
         lv_obj_add_flag(s_ringing_overlay, LV_OBJ_FLAG_HIDDEN);
 
+        /* Wire the reject button click handler */
+        scr_ringing_set_reject_handler(s_ringing_overlay, on_reject_click, NULL);
+
         bsp_display_unlock();
     }
 
@@ -178,6 +311,27 @@ static void on_got_ip(void)
             ESP_LOGW(TAG, "Heartbeat failed: %s (continuing anyway)",
                      esp_err_to_name(err));
         }
+
+        /* Spawn the unifix action worker BEFORE the SSE listener, so
+         * the queue is ready by the time the first doorbell.ring arrives. */
+        ESP_LOGI(TAG, "Creating unifix action queue + worker ...");
+        s_unifix_action_queue = xQueueCreate(UNIFIX_QUEUE_DEPTH,
+                                              sizeof(unifix_request_t));
+        if (!s_unifix_action_queue) {
+            ESP_LOGE(TAG, "Failed to create unifix action queue");
+        } else {
+            BaseType_t ok = xTaskCreatePinnedToCore(unifix_action_worker,
+                                                     "unifix_worker",
+                                                     UNIFIX_WORKER_STACK,
+                                                     NULL,
+                                                     UNIFIX_WORKER_PRIO,
+                                                     NULL,
+                                                     UNIFIX_WORKER_CORE);
+            if (ok != pdPASS) {
+                ESP_LOGE(TAG, "Failed to create unifix worker task");
+            }
+        }
+
         ESP_LOGI(TAG, "Starting SSE-Listener for /esp/events ...");
         err = sse_client_start("/esp/events", on_sse_event);
         if (err != ESP_OK) {
