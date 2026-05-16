@@ -110,7 +110,8 @@ static char s_active_cancel_token[CANCEL_TOKEN_BUF_SIZE] = {0};
  * ============================================================ */
 typedef enum {
     UNIFIX_ACTION_REJECT,
-    /* UNIFIX_ACTION_ANSWER, UNIFIX_ACTION_UNLOCK -> spaeter */
+    UNIFIX_ACTION_UNLOCK,
+    /* UNIFIX_ACTION_ANSWER -> spaeter mit Audio */
 } unifix_action_t;
 
 typedef struct {
@@ -135,6 +136,10 @@ static void unifix_action_worker(void *arg)
         case UNIFIX_ACTION_REJECT:
             ESP_LOGI(TAG, "Worker: dispatching REJECT");
             unifix_client_reject(req.event_id);
+            break;
+        case UNIFIX_ACTION_UNLOCK:
+            ESP_LOGI(TAG, "Worker: dispatching UNLOCK");
+            unifix_client_unlock(req.event_id);
             break;
         default:
             ESP_LOGW(TAG, "Worker: unknown action %d", req.action);
@@ -176,6 +181,42 @@ static void on_reject_click(lv_event_t *e)
 
     if (xQueueSend(s_unifix_action_queue, &req, 0) != pdTRUE) {
         ESP_LOGE(TAG, "Reject: action queue full");
+    }
+}
+
+
+/* ============================================================
+ * Unlock button click handler
+ *
+ * Runs on the LVGL task. Hides the overlay immediately (optimistic
+ * UI: door is being opened, no need to keep showing the ring), then
+ * enqueues the UNLOCK request for the worker. The server resolves
+ * the door via paired_intercom_mac, no event_id needed.
+ * ============================================================ */
+static void on_unlock_click(lv_event_t *e)
+{
+    (void)e;
+    ESP_LOGI(TAG, "Unlock button pressed");
+
+    /* Optimistic UI: hide the overlay immediately */
+    if (s_ringing_overlay) {
+        lv_obj_add_flag(s_ringing_overlay, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    if (s_active_cancel_token[0] == 0) {
+        ESP_LOGW(TAG, "Unlock: no active cancel_token, skipping POST");
+        return;
+    }
+    if (!s_unifix_action_queue) {
+        ESP_LOGE(TAG, "Unlock: action queue not ready");
+        return;
+    }
+
+    unifix_request_t req = { .action = UNIFIX_ACTION_UNLOCK };
+    snprintf(req.event_id, sizeof(req.event_id), "%s", s_active_cancel_token);
+
+    if (xQueueSend(s_unifix_action_queue, &req, 0) != pdTRUE) {
+        ESP_LOGE(TAG, "Unlock: action queue full");
     }
 }
 
@@ -304,8 +345,9 @@ static void on_got_ip(void)
         s_ringing_overlay = scr_ringing_build(s_idle_screen, &ring);
         lv_obj_add_flag(s_ringing_overlay, LV_OBJ_FLAG_HIDDEN);
 
-        /* Wire the reject button click handler */
+        /* Wire the ringing overlay button click handlers */
         scr_ringing_set_reject_handler(s_ringing_overlay, on_reject_click, NULL);
+        scr_ringing_set_unlock_handler(s_ringing_overlay, on_unlock_click, NULL);
 
         bsp_display_unlock();
         ESP_LOGI(TAG, "Idle screen + ringing overlay built (overlay=%p)",
