@@ -41,11 +41,19 @@
 
 #include "driver/jpeg_decode.h"
 
+#include "services/device_token.h"
+
 static const char *TAG = "STREAM";
 
+/*
+ * Stream-Endpoint laeuft jetzt ueber den unifix-Server-Proxy.
+ * Profile-Resolution serverseitig via Bearer-Token-Lookup
+ * (siehe Master-Chat S14-01/FIX01). go2rtc ist Loopback-only
+ * auf dem RPi, kein direkter Zugriff mehr.
+ */
 #define MJPEG_HOST      "192.168.1.42"
-#define MJPEG_PORT      1984
-#define MJPEG_PATH      "/api/stream.mjpeg?src=intercom_esp"
+#define MJPEG_PORT      9080
+#define MJPEG_PATH      "/esp/stream.mjpeg"
 
 /* JPEG / canvas buffers */
 static uint8_t *s_jpeg_buf = NULL;
@@ -232,20 +240,39 @@ static void mjpeg_task(void *arg)
             continue;
         }
 
-        char req[512];
+        /* Load the device token (cached in NVS) for the Bearer header.
+         * Token is loaded fresh on every reconnect so we pick up any
+         * NVS update from a future provisioning rerun without restart. */
+        char token[DEVICE_TOKEN_MAX_LEN] = {0};
+        if (device_token_get(token, sizeof(token)) != ESP_OK) {
+            ESP_LOGE(TAG, "device_token_get failed, cannot auth stream");
+            close(sock);
+            vTaskDelay(pdMS_TO_TICKS(5000));
+            continue;
+        }
+
+        char req[768];
         int req_len = snprintf(req, sizeof(req),
             "GET %s HTTP/1.1\r\n"
             "Host: %s:%d\r\n"
+            "Authorization: Bearer %s\r\n"
             "User-Agent: ESP32-P4-Display\r\n"
             "Accept: multipart/x-mixed-replace\r\n"
             "Connection: keep-alive\r\n"
             "\r\n",
-            MJPEG_PATH, MJPEG_HOST, MJPEG_PORT);
+            MJPEG_PATH, MJPEG_HOST, MJPEG_PORT, token);
+
+        /* Wipe the token from stack immediately after building the
+         * request, defense in depth so it does not sit around in RAM. */
+        memset(token, 0, sizeof(token));
+
         if (send(sock, req, req_len, 0) != req_len) {
             ESP_LOGE(TAG, "send failed");
+            memset(req, 0, sizeof(req));
             close(sock);
             continue;
         }
+        memset(req, 0, sizeof(req));
         ESP_LOGI(TAG, "GET sent, waiting for stream");
 
         size_t buf_len = 0;
