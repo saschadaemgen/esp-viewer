@@ -68,6 +68,25 @@ esp_err_t unifix_client_heartbeat(void);
  */
 esp_err_t unifix_client_reject(const char *event_id);
 
+/**
+ * POST /esp/unlock
+ *
+ * Loest die Tueroeffnung aus. Der Server bestimmt die zu oeffnende Tuer
+ * selbststaendig via paired_intercom_mac (Auto-Door-Resolution seit
+ * Master-S13-07).
+ *
+ * Body: {"event_id":"<cancel_token>"}
+ *
+ * @param event_id  Der cancel_token aus dem SSE doorbell.ring Event
+ *
+ * @return ESP_OK                   Server hat unlock akzeptiert (HTTP 2xx)
+ * @return ESP_ERR_INVALID_STATE    Client nicht initialisiert
+ * @return ESP_ERR_INVALID_ARG      event_id NULL, leer oder zu lang
+ * @return ESP_ERR_INVALID_RESPONSE Server hat mit Fehler-Status geantwortet
+ * @return ESP_FAIL                 Netzwerk-Fehler
+ */
+esp_err_t unifix_client_unlock(const char *event_id);
+
 #ifdef __cplusplus
 }
 #endif
