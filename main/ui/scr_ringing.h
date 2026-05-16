@@ -36,6 +36,23 @@ typedef struct {
  */
 lv_obj_t *scr_ringing_build(lv_obj_t *parent, const scr_ringing_data_t *data);
 
+/**
+ * Attach a click handler to the reject (red, Ignorieren) button.
+ *
+ * Must be called AFTER scr_ringing_build. The setter caches the
+ * reject button internally on build, so only the most recently
+ * built overlay is wired. Calling this multiple times stacks
+ * additional callbacks via lv_obj_add_event_cb.
+ *
+ * @param overlay     The overlay object returned by scr_ringing_build
+ *                    (currently unused, reserved for future multi-overlay support)
+ * @param cb          LVGL event callback, fired on LV_EVENT_CLICKED
+ * @param user_data   Passed through to the callback via lv_event_get_user_data
+ */
+void scr_ringing_set_reject_handler(lv_obj_t *overlay,
+                                    lv_event_cb_t cb,
+                                    void *user_data);
+
 #ifdef __cplusplus
 }
 #endif

@@ -34,6 +34,17 @@
 #include "lvgl.h"
 
 
+/*
+ * Cached button pointers, set during scr_ringing_build,
+ * consumed by scr_ringing_set_*_handler setters.
+ *
+ * Single-instance: the overlay is built once in main.c on_got_ip.
+ * If the overlay is ever rebuilt, the cache simply gets overwritten
+ * and the previous overlay's setters become no-ops on the new one.
+ */
+static lv_obj_t *s_reject_btn = NULL;
+
+
 /* ---------- Bell hero with pulse rings ---------- */
 static void build_bell_hero(lv_obj_t *parent)
 {
@@ -157,7 +168,12 @@ static lv_obj_t *build_ring_btn(lv_obj_t *parent, const char *symbol,
 }
 
 
-/* ---------- .ring-col (button + label) ---------- */
+/* ---------- .ring-col (button + label) ----------
+ *
+ * Returns the button (not the col) so callers can cache it for
+ * later event-handler wiring. The col is still constructed; only
+ * the return value semantics changed.
+ */
 static lv_obj_t *build_ring_col(lv_obj_t *parent, const char *symbol,
                                 ring_btn_kind_t kind, bool disabled,
                                 const char *label_text)
@@ -173,7 +189,7 @@ static lv_obj_t *build_ring_col(lv_obj_t *parent, const char *symbol,
     lv_obj_set_style_pad_row(col, UI_SPACE_3, 0);
     lv_obj_clear_flag(col, LV_OBJ_FLAG_SCROLLABLE);
 
-    build_ring_btn(col, symbol, kind, disabled);
+    lv_obj_t *btn = build_ring_btn(col, symbol, kind, disabled);
 
     /* .ring-label: 14px medium, rgba(255,255,255,0.85) */
     lv_obj_t *lbl = lv_label_create(col);
@@ -182,7 +198,7 @@ static lv_obj_t *build_ring_col(lv_obj_t *parent, const char *symbol,
     lv_obj_set_style_text_color(lbl, UI_COLOR_TEXT, 0);
     lv_obj_set_style_text_opa(lbl, 217, 0); /* 0.85 */
 
-    return col;
+    return btn;
 }
 
 
@@ -258,10 +274,23 @@ lv_obj_t *scr_ringing_build(lv_obj_t *parent, const scr_ringing_data_t *data)
     lv_obj_clear_flag(actions, LV_OBJ_FLAG_SCROLLABLE);
 
     /* 3 columns: Ignorieren / Tür auf (disabled) / Annehmen (disabled).
-     * Template marks warn and ok as is-disabled - they activate after answer. */
-    build_ring_col(actions, ICON_X,         RING_DANGER, false, "Ignorieren");
-    build_ring_col(actions, ICON_DOOR_OPEN, RING_WARN,   true,  "Tür auf");
-    build_ring_col(actions, ICON_PHONE,     RING_OK,     true,  "Annehmen");
+     * Template marks warn and ok as is-disabled - they activate after answer.
+     * The reject button pointer is cached for scr_ringing_set_reject_handler. */
+    s_reject_btn = build_ring_col(actions, ICON_X, RING_DANGER, false, "Ignorieren");
+    build_ring_col(actions, ICON_DOOR_OPEN, RING_WARN, true, "Tür auf");
+    build_ring_col(actions, ICON_PHONE,     RING_OK,   true, "Annehmen");
 
     return overlay;
+}
+
+
+/* ---------- Handler setters ---------- */
+void scr_ringing_set_reject_handler(lv_obj_t *overlay,
+                                    lv_event_cb_t cb,
+                                    void *user_data)
+{
+    (void)overlay; /* reserved for future multi-overlay support */
+    if (!s_reject_btn || !cb) return;
+    lv_obj_add_event_cb(s_reject_btn, cb, LV_EVENT_CLICKED, user_data);
+    lv_obj_add_flag(s_reject_btn, LV_OBJ_FLAG_CLICKABLE);
 }
