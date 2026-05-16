@@ -43,6 +43,7 @@
  * and the previous overlay's setters become no-ops on the new one.
  */
 static lv_obj_t *s_reject_btn = NULL;
+static lv_obj_t *s_unlock_btn = NULL;
 
 
 /* ---------- Bell hero with pulse rings ---------- */
@@ -273,11 +274,11 @@ lv_obj_t *scr_ringing_build(lv_obj_t *parent, const scr_ringing_data_t *data)
     lv_obj_set_style_pad_column(actions, UI_SPACE_5, 0);
     lv_obj_clear_flag(actions, LV_OBJ_FLAG_SCROLLABLE);
 
-    /* 3 columns: Ignorieren / Tür auf (disabled) / Annehmen (disabled).
-     * Template marks warn and ok as is-disabled - they activate after answer.
-     * The reject button pointer is cached for scr_ringing_set_reject_handler. */
-    s_reject_btn = build_ring_col(actions, ICON_X, RING_DANGER, false, "Ignorieren");
-    build_ring_col(actions, ICON_DOOR_OPEN, RING_WARN, true, "Tür auf");
+    /* 3 columns: Ignorieren / Tür auf / Annehmen.
+     * Reject and unlock buttons are cached for handler setters.
+     * Annehmen stays disabled until audio support is wired. */
+    s_reject_btn = build_ring_col(actions, ICON_X,         RING_DANGER, false, "Ignorieren");
+    s_unlock_btn = build_ring_col(actions, ICON_DOOR_OPEN, RING_WARN,   false, "Tür auf");
     build_ring_col(actions, ICON_PHONE,     RING_OK,   true, "Annehmen");
 
     return overlay;
@@ -293,4 +294,14 @@ void scr_ringing_set_reject_handler(lv_obj_t *overlay,
     if (!s_reject_btn || !cb) return;
     lv_obj_add_event_cb(s_reject_btn, cb, LV_EVENT_CLICKED, user_data);
     lv_obj_add_flag(s_reject_btn, LV_OBJ_FLAG_CLICKABLE);
+}
+
+void scr_ringing_set_unlock_handler(lv_obj_t *overlay,
+                                    lv_event_cb_t cb,
+                                    void *user_data)
+{
+    (void)overlay; /* reserved for future multi-overlay support */
+    if (!s_unlock_btn || !cb) return;
+    lv_obj_add_event_cb(s_unlock_btn, cb, LV_EVENT_CLICKED, user_data);
+    lv_obj_add_flag(s_unlock_btn, LV_OBJ_FLAG_CLICKABLE);
 }

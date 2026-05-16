@@ -53,6 +53,16 @@ void scr_ringing_set_reject_handler(lv_obj_t *overlay,
                                     lv_event_cb_t cb,
                                     void *user_data);
 
+/**
+ * Attach a click handler to the unlock (orange, Tuer auf) button.
+ *
+ * Must be called AFTER scr_ringing_build. Same semantics as
+ * scr_ringing_set_reject_handler.
+ */
+void scr_ringing_set_unlock_handler(lv_obj_t *overlay,
+                                    lv_event_cb_t cb,
+                                    void *user_data);
+
 #ifdef __cplusplus
 }
 #endif
