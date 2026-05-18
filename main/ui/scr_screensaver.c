@@ -208,10 +208,11 @@ lv_obj_t *scr_screensaver_build(lv_obj_t *parent, language_t lang)
                           LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER);
-    /* Row-Gap -10: leichtes Zusammenziehen der Minuten unter die
-     * Stunden. -20 war zu eng (Glyphen-Beruehrung), 0 zu locker,
-     * -10 ist der Goldilocks-Wert (Test 18.05.). */
-    lv_obj_set_style_pad_row(clock_grp, -10, 0);
+    /* Row-Gap +20: Minuten mit etwas Luft unter die Stunden.
+     * Test-Iteration (18.05.): -20 zu eng, 0 zu hoch, -10 falsche
+     * Richtung, +20 ist die richtige Mischung (Minuten ruecken
+     * nach unten, leichter visueller Atem zwischen den Bloecken). */
+    lv_obj_set_style_pad_row(clock_grp, 20, 0);
     lv_obj_set_style_bg_opa(clock_grp, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(clock_grp, 0, 0);
     lv_obj_set_style_pad_all(clock_grp, 0, 0);
