@@ -208,11 +208,10 @@ lv_obj_t *scr_screensaver_build(lv_obj_t *parent, language_t lang)
                           LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER);
-    /* Row-Gap 0: Minuten direkt unter Stunden ohne Ueberlapp.
-     * Vorheriger -20 hat die Glyphen-Bloecke sich beruehren lassen
-     * (Oberkante "6" ueber Unterkante "3"). Pixel-Style bleibt dank
-     * der vertikal-stacked Layout-Form, nur ohne Crash. */
-    lv_obj_set_style_pad_row(clock_grp, 0, 0);
+    /* Row-Gap -10: leichtes Zusammenziehen der Minuten unter die
+     * Stunden. -20 war zu eng (Glyphen-Beruehrung), 0 zu locker,
+     * -10 ist der Goldilocks-Wert (Test 18.05.). */
+    lv_obj_set_style_pad_row(clock_grp, -10, 0);
     lv_obj_set_style_bg_opa(clock_grp, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(clock_grp, 0, 0);
     lv_obj_set_style_pad_all(clock_grp, 0, 0);
