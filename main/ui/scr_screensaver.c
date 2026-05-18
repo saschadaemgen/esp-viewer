@@ -208,10 +208,11 @@ lv_obj_t *scr_screensaver_build(lv_obj_t *parent, language_t lang)
                           LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER);
-    /* Negativer Row-Gap: zieht Minuten-Block nach oben in den Lead
-     * des Stunden-Blocks. Pixel-Telefon-Style (vertikal stacked
-     * statt horizontal mit Doppelpunkt). */
-    lv_obj_set_style_pad_row(clock_grp, -20, 0);
+    /* Row-Gap 0: Minuten direkt unter Stunden ohne Ueberlapp.
+     * Vorheriger -20 hat die Glyphen-Bloecke sich beruehren lassen
+     * (Oberkante "6" ueber Unterkante "3"). Pixel-Style bleibt dank
+     * der vertikal-stacked Layout-Form, nur ohne Crash. */
+    lv_obj_set_style_pad_row(clock_grp, 0, 0);
     lv_obj_set_style_bg_opa(clock_grp, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(clock_grp, 0, 0);
     lv_obj_set_style_pad_all(clock_grp, 0, 0);
@@ -244,8 +245,9 @@ lv_obj_t *scr_screensaver_build(lv_obj_t *parent, language_t lang)
     lv_obj_set_style_text_font(date, UI_FONT_LG, 0);   /* 18px Montserrat */
     lv_obj_set_style_text_color(date, UI_COLOR_TEXT, 0);
     lv_obj_set_style_text_opa(date, UI_OPA_TEXT_SECONDARY, 0);
-    /* 70px Abstand zur Minuten-Zeile - Briefing-Vorgabe. */
-    lv_obj_set_style_margin_top(date, 70, 0);
+    /* 50px Abstand zur Minuten-Zeile. Vorheriger 70px war zu viel
+     * Luft (Test 18.05.). */
+    lv_obj_set_style_margin_top(date, 50, 0);
     lv_obj_set_style_margin_bottom(date, 32, 0);
     s.date_label = date;
 
