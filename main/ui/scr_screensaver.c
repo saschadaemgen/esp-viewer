@@ -21,8 +21,12 @@
 typedef struct {
     lv_obj_t *root;
 
-    /* Big clock */
-    lv_obj_t *clock_label;
+    /* Pixel-style vertical clock: HH on its own line, MM below
+     * with negative pad_row so the two digit-blocks overlap into
+     * the Montserrat-200 line-height whitespace. */
+    lv_obj_t *clock_group;
+    lv_obj_t *clock_hour;
+    lv_obj_t *clock_minute;
 
     /* Date below clock */
     lv_obj_t *date_label;
@@ -42,6 +46,7 @@ typedef struct {
     int unread_count;
 
     /* Last rendered time/date to skip redundant label updates */
+    int last_hour;
     int last_minute;
     int last_wday;
     int last_mday;
@@ -118,36 +123,40 @@ static void tick_cb(lv_timer_t *t)
 {
     (void)t;
 
-    /* Clock - only redraw on minute change (cheap to compute, but
-     * skipping the label_set saves a bunch of LVGL invalidations). */
-    char tbuf[8];
-    time_sync_format_time(tbuf, sizeof(tbuf), s.language);
-
-    /* montserrat_200 hat nur Ziffern und Doppelpunkt im Range.
-     * Bei unsynced (time_sync_format_time -> "--:--") wuerde LVGL
-     * Kaesten-Fallback rendern. Bis NTP synced -> leerer String. */
+    /* Bei nicht-synced: beide Labels leer (montserrat_200 Range hat
+     * nur Ziffern + Doppelpunkt, "--" wuerde Kaesten zeigen). */
     if (!time_sync_is_synced()) {
-        tbuf[0] = 0;
+        if (s.clock_hour)   lv_label_set_text(s.clock_hour, "");
+        if (s.clock_minute) lv_label_set_text(s.clock_minute, "");
+        return;
     }
 
-    if (s.clock_label) {
-        lv_label_set_text(s.clock_label, tbuf);
+    time_t now = 0;
+    time(&now);
+    struct tm tm_local;
+    localtime_r(&now, &tm_local);
+
+    /* Stunden + Minuten getrennt rendern, nur bei Aenderung labeln
+     * (Minute aendert sich 60x/h, Stunde 1x/h). Spart LVGL-invalidate. */
+    if (tm_local.tm_hour != s.last_hour) {
+        s.last_hour = tm_local.tm_hour;
+        char hh[4];
+        snprintf(hh, sizeof(hh), "%02d", tm_local.tm_hour);
+        if (s.clock_hour) lv_label_set_text(s.clock_hour, hh);
+    }
+    if (tm_local.tm_min != s.last_minute) {
+        s.last_minute = tm_local.tm_min;
+        char mm[4];
+        snprintf(mm, sizeof(mm), "%02d", tm_local.tm_min);
+        if (s.clock_minute) lv_label_set_text(s.clock_minute, mm);
     }
 
     /* Date - only redraw on day change */
-    if (time_sync_is_synced()) {
-        time_t now = 0;
-        /* localtime via the same path time_sync uses internally;
-         * we just compare cached wday/mday. */
-        time(&now);
-        struct tm tm_local;
-        localtime_r(&now, &tm_local);
-        if (tm_local.tm_mday != s.last_mday ||
-            tm_local.tm_wday != s.last_wday) {
-            s.last_mday = tm_local.tm_mday;
-            s.last_wday = tm_local.tm_wday;
-            rerender_date_now();
-        }
+    if (tm_local.tm_mday != s.last_mday ||
+        tm_local.tm_wday != s.last_wday) {
+        s.last_mday = tm_local.tm_mday;
+        s.last_wday = tm_local.tm_wday;
+        rerender_date_now();
     }
 }
 
@@ -160,6 +169,7 @@ lv_obj_t *scr_screensaver_build(lv_obj_t *parent, language_t lang)
     memset(&s, 0, sizeof(s));
     s.language = lang;
     s.unread_count = 0;
+    s.last_hour = -1;
     s.last_minute = -1;
     s.last_wday = -1;
     s.last_mday = -1;
@@ -184,18 +194,49 @@ lv_obj_t *scr_screensaver_build(lv_obj_t *parent, language_t lang)
     lv_obj_clear_flag(root, LV_OBJ_FLAG_SCROLLABLE);
     s.root = root;
 
-    /* --- Clock (BIG) --- */
-    lv_obj_t *clock = lv_label_create(root);
-    /* Leer-Initial: montserrat_200 hat Range nur Ziffern+Doppelpunkt,
-     * "--:--" wuerde Kaesten zeigen. tick_cb fuellt nach NTP-Sync. */
-    lv_label_set_text(clock, "");
-    lv_obj_set_style_text_font(clock, &montserrat_200, 0);
-    lv_obj_set_style_text_color(clock, UI_COLOR_TEXT, 0);
-    lv_obj_set_style_text_opa(clock, LV_OPA_COVER, 0);
-    /* Master-Chat: letter-spacing 0.02em - LVGL hat lv_obj_set_style_text_letter_space (px) */
-    lv_obj_set_style_text_letter_space(clock, 4, 0);
-    lv_obj_set_style_margin_bottom(clock, 16, 0);
-    s.clock_label = clock;
+    /* --- Pixel-Style Clock --- */
+    /* Sub-container im Flex-Column-Modus mit negativem pad_row.
+     * Damit ueberlappen die zwei montserrat_200-Labels in deren
+     * vertikalem Whitespace (Line-Height >> Glyph-Height bei 200px).
+     * Sasch kann den Wert ggf. nachjustieren wenn visuelle Luecke
+     * zu gross oder zu klein. */
+    lv_obj_t *clock_grp = lv_obj_create(root);
+    lv_obj_remove_style_all(clock_grp);
+    lv_obj_set_size(clock_grp, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(clock_grp, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(clock_grp,
+                          LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+    /* Negativer Row-Gap: zieht Minuten-Block nach oben in den Lead
+     * des Stunden-Blocks. Pixel-Telefon-Style (vertikal stacked
+     * statt horizontal mit Doppelpunkt). */
+    lv_obj_set_style_pad_row(clock_grp, -20, 0);
+    lv_obj_set_style_bg_opa(clock_grp, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(clock_grp, 0, 0);
+    lv_obj_set_style_pad_all(clock_grp, 0, 0);
+    lv_obj_clear_flag(clock_grp, LV_OBJ_FLAG_SCROLLABLE);
+    s.clock_group = clock_grp;
+
+    /* Stunden-Label - oben */
+    lv_obj_t *hour = lv_label_create(clock_grp);
+    lv_label_set_text(hour, "");
+    lv_obj_set_style_text_font(hour, &montserrat_200, 0);
+    lv_obj_set_style_text_color(hour, UI_COLOR_TEXT, 0);
+    lv_obj_set_style_text_opa(hour, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_letter_space(hour, 4, 0);
+    lv_obj_set_style_text_align(hour, LV_TEXT_ALIGN_CENTER, 0);
+    s.clock_hour = hour;
+
+    /* Minuten-Label - unter Stunden */
+    lv_obj_t *minute = lv_label_create(clock_grp);
+    lv_label_set_text(minute, "");
+    lv_obj_set_style_text_font(minute, &montserrat_200, 0);
+    lv_obj_set_style_text_color(minute, UI_COLOR_TEXT, 0);
+    lv_obj_set_style_text_opa(minute, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_letter_space(minute, 4, 0);
+    lv_obj_set_style_text_align(minute, LV_TEXT_ALIGN_CENTER, 0);
+    s.clock_minute = minute;
 
     /* --- Date (small, under clock) --- */
     lv_obj_t *date = lv_label_create(root);
@@ -203,6 +244,8 @@ lv_obj_t *scr_screensaver_build(lv_obj_t *parent, language_t lang)
     lv_obj_set_style_text_font(date, UI_FONT_LG, 0);   /* 18px Montserrat */
     lv_obj_set_style_text_color(date, UI_COLOR_TEXT, 0);
     lv_obj_set_style_text_opa(date, UI_OPA_TEXT_SECONDARY, 0);
+    /* 70px Abstand zur Minuten-Zeile - Briefing-Vorgabe. */
+    lv_obj_set_style_margin_top(date, 70, 0);
     lv_obj_set_style_margin_bottom(date, 32, 0);
     s.date_label = date;
 
