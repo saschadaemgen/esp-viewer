@@ -9,8 +9,6 @@
 
 #include "scr_loading.h"
 #include "ui_tokens.h"
-#include "lucide_22.h"
-#include "lucide_88.h"
 
 #include "lvgl.h"
 #include "bsp/esp-bsp.h"
@@ -21,7 +19,6 @@
 
 /* ===== State ===== */
 static lv_obj_t *s_screen      = NULL;
-static lv_obj_t *s_bell        = NULL;
 static lv_obj_t *s_status      = NULL;
 
 static char s_pending_status[64] = {0};
@@ -103,27 +100,50 @@ lv_obj_t *scr_loading_create(void)
     /* Activate this screen */
     lv_screen_load(s_screen);
 
-    /* No glow for now - bell stands alone on black */
+    /* CARVILON-Branding mittig auf dem Screen.
+     * Stil 1:1 vom Settings-Footer (build_carvilon_footer in scr_settings.c):
+     *   Headline UI_FONT_XL, opa SECONDARY, letter_space 8
+     *   Sub      UI_FONT_BASE, opa TERTIARY, letter_space 4 */
+    lv_obj_t *branding = lv_obj_create(s_screen);
+    lv_obj_remove_style_all(branding);
+    lv_obj_set_size(branding, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_center(branding);
+    lv_obj_set_style_bg_opa(branding, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(branding, 0, 0);
+    lv_obj_set_flex_flow(branding, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(branding,
+        LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(branding, UI_SPACE_2, 0);
+    lv_obj_clear_flag(branding, LV_OBJ_FLAG_SCROLLABLE);
 
-    /* Bell icon: ICON_BELL at 88px */
-    s_bell = lv_label_create(s_screen);
-    lv_label_set_text(s_bell, ICON_BELL);
-    lv_obj_set_style_text_font(s_bell, &lucide_88, 0);
-    lv_obj_set_style_text_color(s_bell, UI_COLOR_TEXT, 0);
-    lv_obj_align(s_bell, LV_ALIGN_CENTER, 0, -80);
+    lv_obj_t *head = lv_label_create(branding);
+    lv_label_set_text(head, "CARVILON");
+    lv_obj_set_style_text_font(head, UI_FONT_XL, 0);
+    lv_obj_set_style_text_color(head, UI_COLOR_TEXT, 0);
+    lv_obj_set_style_text_opa(head, UI_OPA_TEXT_SECONDARY, 0);
+    lv_obj_set_style_text_letter_space(head, 8, 0);
 
-    /* Status text */
+    lv_obj_t *brand_sub = lv_label_create(branding);
+    lv_label_set_text(brand_sub, "INTERCOM ESP VIEWER");
+    lv_obj_set_style_text_font(brand_sub, UI_FONT_BASE, 0);
+    lv_obj_set_style_text_color(brand_sub, UI_COLOR_TEXT, 0);
+    lv_obj_set_style_text_opa(brand_sub, UI_OPA_TEXT_TERTIARY, 0);
+    lv_obj_set_style_text_letter_space(brand_sub, 4, 0);
+
+    /* Status text + Spinner unterhalb des Brandings (Branding ist
+     * vertikal zentriert, Status sitzt mit fixem Offset zum
+     * Screen-Bottom). */
     s_status = lv_label_create(s_screen);
     lv_label_set_text(s_status, "Starte");
     lv_obj_set_style_text_font(s_status, UI_FONT_LG, 0);
     lv_obj_set_style_text_color(s_status, UI_COLOR_TEXT, 0);
     lv_obj_set_style_text_opa(s_status, LV_OPA_COVER, 0);
-    lv_obj_align(s_status, LV_ALIGN_CENTER, 0, -10);
+    lv_obj_align(s_status, LV_ALIGN_BOTTOM_MID, 0, -160);
 
     /* Spinner under the status text */
     lv_obj_t *spinner = lv_spinner_create(s_screen);
     lv_obj_set_size(spinner, 28, 28);
-    lv_obj_align(spinner, LV_ALIGN_CENTER, 0, 40);
+    lv_obj_align(spinner, LV_ALIGN_BOTTOM_MID, 0, -110);
     lv_obj_set_style_arc_color(spinner, lv_color_hex(0x1f1f1f), LV_PART_MAIN);
     lv_obj_set_style_arc_width(spinner, 3, LV_PART_MAIN);
     lv_obj_set_style_arc_color(spinner, UI_COLOR_ACCENT, LV_PART_INDICATOR);
