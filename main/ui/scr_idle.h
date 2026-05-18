@@ -49,14 +49,14 @@ lv_obj_t *scr_idle_build(lv_obj_t *screen, const scr_idle_data_t *data);
 void scr_idle_set_time(lv_obj_t *screen, const char *now);
 
 /**
- * Topbar-Uhrzeit setzen (kompakt "HH:MM"). Update kommt aus dem
- * 1s-Timer der gegen time_sync_format_time fuettert. NULL wird
+ * Topbar-Uhrzeit setzen ("HH:MM:SS"). Update kommt aus dem
+ * 1s-Timer der gegen time_sync_format_time_long fuettert. NULL wird
  * ignoriert. Safe to call any time after scr_idle_build.
  */
 void scr_idle_set_clock_time(const char *txt);
 
 /**
- * Topbar-Datum setzen (kompakt "SO, 17. MAI 2026").
+ * Topbar-Datum setzen (kompakt "MO, 18. MAI" / "MON, MAY 18").
  * Wird vom Topbar-Tick aus time_sync_format_date_short gefuettert.
  * NULL wird ignoriert.
  */

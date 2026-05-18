@@ -151,6 +151,25 @@ void time_sync_format_time(char *buf, size_t buflen, language_t lang)
     snprintf(buf, buflen, "%02d:%02d", tm_local.tm_hour, tm_local.tm_min);
 }
 
+void time_sync_format_time_long(char *buf, size_t buflen, language_t lang)
+{
+    (void)lang;  /* time format is locale-neutral */
+
+    if (!buf || buflen == 0) return;
+
+    if (!s_synced) {
+        snprintf(buf, buflen, "--:--:--");
+        return;
+    }
+
+    time_t now = time(NULL);
+    struct tm tm_local;
+    localtime_r(&now, &tm_local);
+
+    snprintf(buf, buflen, "%02d:%02d:%02d",
+             tm_local.tm_hour, tm_local.tm_min, tm_local.tm_sec);
+}
+
 void time_sync_format_date(char *buf, size_t buflen, language_t lang)
 {
     if (!buf || buflen == 0) return;
@@ -204,22 +223,21 @@ void time_sync_format_date_short(char *buf, size_t buflen, language_t lang)
     int wday = tm_local.tm_wday;
     int mon  = tm_local.tm_mon;
     int day  = tm_local.tm_mday;
-    int year = tm_local.tm_year + 1900;
 
     if (wday < 0 || wday > 6) wday = 0;
     if (mon  < 0 || mon  > 11) mon = 0;
 
     switch (lang) {
     case LANG_EN:
-        /* "SUN, MAY 17, 2026" */
-        snprintf(buf, buflen, "%s, %s %d, %d",
-                 wochentage_en_short[wday], monate_en_short[mon], day, year);
+        /* "MON, MAY 18" (US-Stil: Monat zuerst) */
+        snprintf(buf, buflen, "%s, %s %d",
+                 wochentage_en_short[wday], monate_en_short[mon], day);
         break;
     case LANG_DE:
     default:
-        /* "SO, 17. MAI 2026" */
-        snprintf(buf, buflen, "%s, %d. %s %d",
-                 wochentage_de_short[wday], day, monate_de_short[mon], year);
+        /* "MO, 18. MAI" */
+        snprintf(buf, buflen, "%s, %d. %s",
+                 wochentage_de_short[wday], day, monate_de_short[mon]);
         break;
     }
 }

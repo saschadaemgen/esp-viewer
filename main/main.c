@@ -526,12 +526,16 @@ static void on_sse_event(const char *event_name, const char *data)
  * Topbar-Uhrzeit/Datum-Tick
  *
  * 1-Sekunden-LVGL-Timer der die Topbar-Uhrzeit/-Datum aus
- * time_sync fuettert. Laeuft im LVGL-Task-Context (lv_timer),
- * also kein extra display_lock noetig fuer scr_idle_set_clock_*.
+ * time_sync fuettert.
  *
- * Bis NTP synced ist: time_sync_format_time gibt "--:--" zurueck
- * (Topbar-Font kann das rendern, anders als der grosse Bildschirm-
- * schoner-Font). time_sync_format_date_short gibt leeren String.
+ * Format (FIX01):
+ *   Uhrzeit:  "HH:MM:SS"     via time_sync_format_time_long
+ *   Datum:    "MO, 18. MAI"  via time_sync_format_date_short
+ *
+ * Bis NTP synced ist: time_sync_format_time_long gibt "--:--:--"
+ * zurueck (Topbar-Font kann das rendern, anders als der grosse
+ * Bildschirmschoner-Font). time_sync_format_date_short gibt
+ * leeren String.
  *
  * Bei Sprach-Wechsel ruft on_settings_changed das hier direkt
  * nochmal auf, damit das Datum nicht erst nach 1s springt.
@@ -549,12 +553,15 @@ static void topbar_clock_tick(lv_timer_t *t)
         lang = time_sync_lang_from_str(cfg.language);
     }
 
-    char tbuf[8], dbuf[32];
-    time_sync_format_time(tbuf, sizeof(tbuf), lang);
+    char tbuf[16], dbuf[32];
+    time_sync_format_time_long(tbuf, sizeof(tbuf), lang);
     time_sync_format_date_short(dbuf, sizeof(dbuf), lang);
 
-    scr_idle_set_clock_time(tbuf);
-    scr_idle_set_clock_date(dbuf);
+    if (bsp_display_lock(50)) {
+        scr_idle_set_clock_time(tbuf);
+        scr_idle_set_clock_date(dbuf);
+        bsp_display_unlock();
+    }
 }
 
 

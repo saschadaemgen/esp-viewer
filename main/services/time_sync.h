@@ -83,6 +83,8 @@ bool time_sync_is_synced(void);
  * Schreibt die aktuelle Uhrzeit als "HH:MM" in den Buffer.
  * 24h-Format, keine Sekunden.
  *
+ * Verwendet vom Bildschirmschoner (grosse Uhr).
+ *
  * Falls noch nicht synced: schreibt "--:--".
  *
  * @param buf     Output-Buffer
@@ -92,6 +94,20 @@ bool time_sync_is_synced(void);
  *                fuer spaetere AM/PM-Option.
  */
 void time_sync_format_time(char *buf, size_t buflen, language_t lang);
+
+/**
+ * Schreibt die aktuelle Uhrzeit als "HH:MM:SS" in den Buffer.
+ * 24h-Format, MIT Sekunden.
+ *
+ * Verwendet von der Topbar (kleine Uhr oben rechts).
+ *
+ * Falls noch nicht synced: schreibt "--:--:--".
+ *
+ * @param buf     Output-Buffer
+ * @param buflen  Buffer-Groesse (min. 9 Bytes)
+ * @param lang    Sprache - heute nur fuers Format-Symbol relevant.
+ */
+void time_sync_format_time_long(char *buf, size_t buflen, language_t lang);
 
 /**
  * Schreibt das aktuelle Datum lokalisiert in den Buffer.
@@ -109,15 +125,15 @@ void time_sync_format_time(char *buf, size_t buflen, language_t lang);
 void time_sync_format_date(char *buf, size_t buflen, language_t lang);
 
 /**
- * Kompakte Form fuer die Topbar (Uhrzeit-Block oben rechts).
+ * Kompakte Form fuer die Topbar (Datum-Block oben rechts, OHNE Jahr).
  *
- * Deutsch:  "SO, 17. MAI 2026"   (Wochentag-Kuerzel 2 Buchstaben + Monat-3-letter)
- * English:  "SUN, MAY 17, 2026"  (Wochentag-Kuerzel 3 Buchstaben)
+ * Deutsch:  "MO, 18. MAI"   (Wochentag-Kuerzel 2 Buchstaben + Monat-3-letter)
+ * English:  "MON, MAY 18"   (Wochentag-Kuerzel 3 Buchstaben, Monat zuerst)
  *
  * Falls noch nicht synced: schreibt einen leeren String.
  *
  * @param buf     Output-Buffer
- * @param buflen  Buffer-Groesse (min. 24 Bytes)
+ * @param buflen  Buffer-Groesse (min. 16 Bytes)
  * @param lang    Sprache
  */
 void time_sync_format_date_short(char *buf, size_t buflen, language_t lang);
