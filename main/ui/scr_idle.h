@@ -48,6 +48,114 @@ lv_obj_t *scr_idle_build(lv_obj_t *screen, const scr_idle_data_t *data);
  */
 void scr_idle_set_time(lv_obj_t *screen, const char *now);
 
+/**
+ * Topbar-Uhrzeit setzen (kompakt "HH:MM"). Update kommt aus dem
+ * 1s-Timer der gegen time_sync_format_time fuettert. NULL wird
+ * ignoriert. Safe to call any time after scr_idle_build.
+ */
+void scr_idle_set_clock_time(const char *txt);
+
+/**
+ * Topbar-Datum setzen (kompakt "SO, 17. MAI 2026").
+ * Wird vom Topbar-Tick aus time_sync_format_date_short gefuettert.
+ * NULL wird ignoriert.
+ */
+void scr_idle_set_clock_date(const char *txt);
+
+/**
+ * Update the unit-name label in the topbar (Mieter-Name).
+ * Safe to call after scr_idle_build. NULL is ignored.
+ */
+void scr_idle_set_unit_name(const char *unit_name);
+
+/**
+ * Update the stream-meta label "cam  <door_name>" in the bottom-left
+ * of the stream slot. Safe to call after scr_idle_build. NULL is ignored.
+ */
+void scr_idle_set_door_name(const char *door_name);
+
+/**
+ * Returns the modes-container (1fr slot between topbar and actions).
+ * The container holds the stream-view child and accepts a settings-view
+ * child via scr_idle_register_settings_view().
+ *
+ * Caller passes this to scr_settings_build(modes_container, ...).
+ *
+ * @return  modes container, or NULL if scr_idle_build was not called yet.
+ */
+lv_obj_t *scr_idle_get_modes_container(void);
+
+/**
+ * Registers the settings-view (as built by scr_settings_build) so that
+ * scr_idle can animate between stream and settings modes.
+ *
+ * The view should be a direct child of get_modes_container(). The view
+ * is positioned offscreen (parked below) and hidden until shown.
+ *
+ * @param settings_view  Root obj of the settings UI (from scr_settings_build)
+ */
+void scr_idle_register_settings_view(lv_obj_t *settings_view);
+
+/**
+ * Registers the screensaver-view (as built by scr_screensaver_build).
+ *
+ * The view should be a direct child of get_modes_container() and
+ * starts in hidden state. Mode-switching between Stream and
+ * Screensaver is a simple show/hide toggle (no animation), unlike
+ * Settings which slides over.
+ */
+void scr_idle_register_screensaver_view(lv_obj_t *screensaver_view);
+
+/**
+ * Mode-switch: Stream sichtbar, Screensaver versteckt.
+ * Idempotent.
+ */
+void scr_idle_show_stream_mode(void);
+
+/**
+ * Mode-switch: Screensaver sichtbar, Stream versteckt.
+ * No-op wenn scr_idle_register_screensaver_view nicht gerufen wurde.
+ */
+void scr_idle_show_screensaver_mode(void);
+
+/**
+ * Togglet zwischen Stream und Screensaver Mode.
+ * Verwendet vom Touch-Handler auf der Stream/Screensaver-Flaeche.
+ * Settings-Idle-View-Mode bleibt unveraendert (das ist nur ein
+ * temporaerer visueller Toggle).
+ */
+void scr_idle_toggle_idle_mode(void);
+
+/**
+ * Animates from stream-mode to settings-mode (slide-up, 400ms overshoot).
+ * Idempotent: no-op if settings is already shown.
+ * No-op if scr_idle_register_settings_view was not called yet.
+ */
+void scr_idle_show_settings(void);
+
+/**
+ * Animates from settings-mode back to stream-mode (slide-down).
+ */
+void scr_idle_show_stream(void);
+
+/**
+ * @return true if the settings view is currently shown (or sliding in)
+ */
+bool scr_idle_is_settings_shown(void);
+
+/**
+ * Toggle: wenn Settings angezeigt wird, schliesse zurueck zum Stream.
+ * Sonst oeffne Settings. Verwendet von der Settings-Icon-Click-
+ * Handler-Verkettung im main.c.
+ */
+void scr_idle_toggle_settings(void);
+
+/**
+ * Attaches a click handler to the settings icon (right side of the
+ * control-group in the topbar). Multiple handlers can be stacked.
+ */
+void scr_idle_set_settings_handler(lv_event_cb_t cb, void *user_data);
+
 #ifdef __cplusplus
 }
 #endif
