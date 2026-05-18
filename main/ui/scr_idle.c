@@ -13,7 +13,10 @@
 #include "lucide_22.h"
 
 #include "lvgl.h"
+#include "esp_log.h"
 #include <stdio.h>
+
+static const char *TAG = "SCRIDLE";
 
 typedef enum {
     SCR_IDLE_MODE_STREAM = 0,    /* Live-Kamera */
@@ -223,6 +226,7 @@ static lv_obj_t *build_modes_container(lv_obj_t *parent)
 static void on_stream_click_toggle(lv_event_t *e)
 {
     (void)e;
+    ESP_LOGI(TAG, "Stream/Screensaver click -> toggle idle mode");
     scr_idle_toggle_idle_mode();
 }
 
@@ -585,8 +589,10 @@ void scr_idle_show_screensaver_mode(void)
 void scr_idle_toggle_idle_mode(void)
 {
     if (s_refs.current_mode == SCR_IDLE_MODE_STREAM) {
+        ESP_LOGI(TAG, "Toggle: STREAM -> SCREENSAVER");
         scr_idle_show_screensaver_mode();
     } else {
+        ESP_LOGI(TAG, "Toggle: SCREENSAVER -> STREAM");
         scr_idle_show_stream_mode();
     }
 }
@@ -627,12 +633,22 @@ void scr_idle_show_settings(void)
     if (!s_refs.settings_view || !s_refs.stream_view) return;
     if (s_refs.settings_shown) return;
 
+    ESP_LOGI(TAG, "Show settings (slide up)");
+
     lv_coord_t h = lv_obj_get_height(s_refs.modes_container);
     if (h <= 0) h = 800;
 
     /* Ensure visible before animation. The view was hidden either by
      * register_settings_view (boot) or by the previous show_stream(). */
     lv_obj_clear_flag(s_refs.settings_view, LV_OBJ_FLAG_HIDDEN);
+
+    /* WICHTIG (FIX01): settings_view nach vorn ziehen, damit es ueber
+     * stream/screensaver/tooltip_modal liegt. Sonst war es im modes-
+     * container-Child-Index 1 und der screensaver_view (Index 3) hat
+     * es verdeckt - User sah keinen visuellen Effekt vom settings-
+     * Icon-Click (BUG-A). Plus: screensaver-Tap toggelt zu Stream,
+     * worauf das verdeckte settings_view sichtbar wurde (BUG-B). */
+    lv_obj_move_foreground(s_refs.settings_view);
 
     /* Stream stays put; only the settings view slides up over it. */
     start_slide(s_refs.settings_view, h, 0);
