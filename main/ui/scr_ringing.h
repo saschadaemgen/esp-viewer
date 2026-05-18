@@ -63,6 +63,44 @@ void scr_ringing_set_unlock_handler(lv_obj_t *overlay,
                                     lv_event_cb_t cb,
                                     void *user_data);
 
+/**
+ * Update the door-name sub-headline shown beneath "Klingelt".
+ *
+ * Safe to call after scr_ringing_build. NULL is ignored.
+ * Used by the /esp/config-Apply pipeline to react to admin
+ * changes of location_name without rebuilding the overlay.
+ */
+void scr_ringing_set_door_name(const char *door_name);
+
+/**
+ * Attach a click handler to the accept (green, Annehmen) button.
+ *
+ * Optional. Bei fehlendem Handler bleibt der Button visuell aktiv
+ * aber ohne Wirkung (Two-Way-Audio wird in S5+ aufgesetzt).
+ * Same semantics as scr_ringing_set_reject_handler.
+ */
+void scr_ringing_set_accept_handler(lv_obj_t *overlay,
+                                     lv_event_cb_t cb,
+                                     void *user_data);
+
+/**
+ * Fade-In Animation: macht das Overlay sichtbar via opacity 0->1
+ * ueber 400ms ease-out. Bringt das Overlay vor anderen LVGL-Kindern
+ * (move_foreground) damit es ueber Stream/Screensaver/Settings liegt.
+ *
+ * Idempotent - wenn Overlay schon sichtbar wird die Animation neu
+ * gestartet (= harmloser visueller flicker).
+ */
+void scr_ringing_show(void);
+
+/**
+ * Fade-Out Animation: opacity 1->0 ueber 400ms ease-out, dann
+ * HIDDEN-Flag gesetzt sobald die Animation fertig ist.
+ *
+ * Idempotent - wenn schon HIDDEN tut nichts.
+ */
+void scr_ringing_hide(void);
+
 #ifdef __cplusplus
 }
 #endif

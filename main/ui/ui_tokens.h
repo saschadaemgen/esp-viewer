@@ -146,12 +146,23 @@ extern "C" {
  *   Component config -> LVGL configuration -> Font usage
  */
 
+/*
+ * UI_FONT_BASE/LG/XL nutzen unsere eigenen Montserrat-Fonts mit
+ * Latin-1-Erweiterung (Umlaute + Grad). Generiert via lvgl.io-Converter.
+ * UI_FONT_XS/SM/MD/2XL/3XL nutzen weiterhin die LVGL-Built-ins, weil
+ * dort heute keine Umlaute auftauchen (Status-Labels, Headlines etc).
+ */
+
+#include "montserrat_14.h"
+#include "montserrat_18.h"
+#include "montserrat_22.h"
+
 #define UI_FONT_XS                &lv_font_montserrat_12
 #define UI_FONT_SM                &lv_font_montserrat_12
-#define UI_FONT_BASE              &lv_font_montserrat_14
+#define UI_FONT_BASE              &montserrat_14
 #define UI_FONT_MD                &lv_font_montserrat_16
-#define UI_FONT_LG                &lv_font_montserrat_18
-#define UI_FONT_XL                &lv_font_montserrat_22
+#define UI_FONT_LG                &montserrat_18
+#define UI_FONT_XL                &montserrat_22
 #define UI_FONT_2XL               &lv_font_montserrat_26
 #define UI_FONT_3XL               &lv_font_montserrat_26
 
@@ -252,14 +263,15 @@ extern "C" {
  *   stream_h = SCREEN_H - 2*PAD - TOPBAR_H - 2*GAP - ACTIONS_H
  *            = 1280 - 28 - 64 - 20 - 96 = 1072 */
 
-/* Bell-Hero (Ringing-Screen) - 160x160 desktop, 132x132 mobile.
- * Bei 800x1280 sind wir gross genug fuer den 160er Default. */
-#define UI_BELL_HERO_SIZE         160
-#define UI_BELL_HERO_ICON         80     /* SVG-Icon-Groesse */
+/* Bell-Hero (Ringing-Screen) - vergroessert auf ~2.1x Web-Desktop
+ * (800x1280 Hochformat-Display erlaubt grossere Hero-Praesenz).
+ * Pulse-Rings expandieren auf 2.2x = 748px -> passt innerhalb 800. */
+#define UI_BELL_HERO_SIZE         340
+#define UI_BELL_HERO_ICON         88     /* Lucide-88 Font-Groesse */
 
-/* Ring-Buttons (Ignorieren/Tuer/Annehmen) */
-#define UI_RING_BTN_SIZE          72
-#define UI_RING_BTN_ICON          32
+/* Ring-Buttons (Ignorieren/Tuer/Annehmen) - ~2.1x Web-Desktop. */
+#define UI_RING_BTN_SIZE          152
+#define UI_RING_BTN_ICON          64
 
 /* Action-Buttons (Idle bottom bar) */
 #define UI_ACTION_BTN_SIZE        52
@@ -267,9 +279,9 @@ extern "C" {
 #define UI_ACTION_GAP             26
 
 /* Control-Group (Idle topbar center) */
-#define UI_CTRL_BTN_SIZE          30
-#define UI_CTRL_ICON              18
-#define UI_CTRL_SEP_H             16
+#define UI_CTRL_BTN_SIZE          44
+#define UI_CTRL_ICON              22
+#define UI_CTRL_SEP_H             24
 
 
 /* ============================================================

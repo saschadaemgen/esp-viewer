@@ -24,6 +24,7 @@
 
 #include "idle_mode_mgr.h"
 #include "scr_idle.h"
+#include "scr_ringing.h"
 #include "services/unifix_config.h"
 
 #include <stdbool.h>
@@ -274,10 +275,20 @@ void idle_mode_mgr_doorbell_start(void)
     /* Hart 100% ohne Fade. apply_backlight ist BSP-direct,
      * darf von jedem Task aufgerufen werden. Bevorzugt brechen wir
      * eine laufende Fade-Animation ab, damit sie nicht ueber unser
-     * Hard-Set drueber malt. */
+     * Hard-Set drueber malt. Plus visuelle Orchestrierung:
+     * Settings auto-schliessen + Mode-Switch zu Stream damit der
+     * User den Kamera-Feed durch das halbtransparente Overlay sieht.
+     * scr_ringing_show macht den 400ms-Fade-In. */
     if (bsp_display_lock(50)) {
         lv_anim_delete(NULL, fade_anim_exec);
         lv_display_trigger_activity(NULL);
+
+        if (scr_idle_is_settings_shown()) {
+            scr_idle_show_stream();  /* slide settings down */
+        }
+        scr_idle_show_stream_mode();  /* idempotent */
+        scr_ringing_show();
+
         bsp_display_unlock();
     }
     apply_backlight(WAKE_HARD_BRIGHTNESS);
@@ -300,6 +311,7 @@ void idle_mode_mgr_doorbell_end(void)
     ESP_LOGI(TAG, "Doorbell end -> backlight %d%% (fade)", target);
 
     if (bsp_display_lock(50)) {
+        scr_ringing_hide();  /* 400ms fade-out */
         start_fade(s_current_brightness, target);
         bsp_display_unlock();
     }

@@ -35,15 +35,18 @@
 
 
 /*
- * Cached button pointers, set during scr_ringing_build,
- * consumed by scr_ringing_set_*_handler setters.
+ * Cached pointers, set during scr_ringing_build, consumed by
+ * scr_ringing_set_*_handler setters und scr_ringing_show/hide.
  *
  * Single-instance: the overlay is built once in main.c on_got_ip.
  * If the overlay is ever rebuilt, the cache simply gets overwritten
  * and the previous overlay's setters become no-ops on the new one.
  */
+static lv_obj_t *s_overlay    = NULL;
 static lv_obj_t *s_reject_btn = NULL;
 static lv_obj_t *s_unlock_btn = NULL;
+static lv_obj_t *s_accept_btn = NULL;
+static lv_obj_t *s_sub_label  = NULL;
 
 
 /* ---------- Bell hero with pulse rings ---------- */
@@ -153,15 +156,17 @@ static lv_obj_t *build_ring_btn(lv_obj_t *parent, const char *symbol,
         lv_obj_set_style_opa(btn, 107, 0); /* 0.42 */
     }
 
-    /* Icon - Lucide font glyph at ~28px (lucide_22 base scaled 1.27x).
-     * The scaling is barely visible (within anti-alias tolerance) and
-     * avoids generating a second lucide_28 font for these three icons. */
+    /* Icon - Lucide font glyph at ~50px (lucide_22 base scaled 2.27x).
+     * Buttons sind 152x152 (UI_RING_BTN_SIZE) - Icon-Target ~50px.
+     * lucide_88 hat nur ICON_BELL als Glyphe, nicht X/door/phone, deshalb
+     * skalieren wir lucide_22 hoch. Etwas weicher als ein nativer 50px-
+     * Font, aber kein zweites Font-Asset noetig. */
     lv_obj_t *icon = lv_label_create(btn);
     lv_label_set_text(icon, symbol);
     lv_obj_set_style_text_font(icon, &lucide_22, 0);
     lv_obj_set_style_text_color(icon, UI_COLOR_TEXT, 0);
     lv_obj_center(icon);
-    lv_obj_set_style_transform_scale(icon, 326, 0);  /* 256 = 1.0x, 326 = 1.27x */
+    lv_obj_set_style_transform_scale(icon, 580, 0);  /* 256=1.0 -> 580=2.27x (22->50px) */
     lv_obj_set_style_transform_pivot_x(icon, 11, 0); /* half of 22 */
     lv_obj_set_style_transform_pivot_y(icon, 11, 0);
 
@@ -206,16 +211,16 @@ static lv_obj_t *build_ring_col(lv_obj_t *parent, const char *symbol,
 /* ---------- Top-level build ---------- */
 lv_obj_t *scr_ringing_build(lv_obj_t *parent, const scr_ringing_data_t *data)
 {
-    /* .ringing: absolute inset 0, accent-soft radial gradient bg
-     * (simplified as solid black with subtle accent), opacity transition */
+    /* .ringing: absolute inset 0. Web nutzt #000 + Stream-Embed mit
+     * opacity 0.45. ESP-Aequivalent: halbtransparent (70% schwarz)
+     * damit der Stream-View darunter durchscheint. Dunkel genug
+     * fuer Kontrast der Bell + Buttons. */
     lv_obj_t *overlay = lv_obj_create(parent);
     lv_obj_remove_style_all(overlay);
     lv_obj_set_size(overlay, lv_pct(100), lv_pct(100));
     lv_obj_align(overlay, LV_ALIGN_TOP_LEFT, 0, 0);
-    /* CSS background: layered radial gradients on #000.
-     * LVGL has no radial; we use solid black + accent-soft tint via opa. */
     lv_obj_set_style_bg_color(overlay, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_bg_opa(overlay, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_opa(overlay, LV_OPA_70, 0);  /* ~178/255, Stream scheint durch */
     lv_obj_set_style_border_width(overlay, 0, 0);
     /* CSS padding: 90px 24px 56px - top large, sides 24, bottom 56 */
     lv_obj_set_style_pad_top(overlay, 90, 0);
@@ -225,6 +230,7 @@ lv_obj_t *scr_ringing_build(lv_obj_t *parent, const scr_ringing_data_t *data)
     lv_obj_set_flex_flow(overlay, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(overlay, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_clear_flag(overlay, LV_OBJ_FLAG_SCROLLABLE);
+    s_overlay = overlay;
 
     /* Bell hero */
     build_bell_hero(overlay);
@@ -253,6 +259,7 @@ lv_obj_t *scr_ringing_build(lv_obj_t *parent, const scr_ringing_data_t *data)
     lv_obj_set_style_text_font(sub, UI_FONT_LG, 0);
     lv_obj_set_style_text_color(sub, UI_COLOR_TEXT, 0);
     lv_obj_set_style_text_opa(sub, 166, 0); /* 0.65 */
+    s_sub_label = sub;
 
     /* Spacer to push ring-actions to bottom (CSS: margin-top auto) */
     lv_obj_t *spacer = lv_obj_create(overlay);
@@ -275,11 +282,12 @@ lv_obj_t *scr_ringing_build(lv_obj_t *parent, const scr_ringing_data_t *data)
     lv_obj_clear_flag(actions, LV_OBJ_FLAG_SCROLLABLE);
 
     /* 3 columns: Ignorieren / Tür auf / Annehmen.
-     * Reject and unlock buttons are cached for handler setters.
-     * Annehmen stays disabled until audio support is wired. */
+     * Reject/unlock/accept buttons sind gecacht fuer handler setters.
+     * Annehmen ist visuell aktiv (glow + full opacity), handler bleibt
+     * optional (kein POST bis Two-Way-Audio in S5+). */
     s_reject_btn = build_ring_col(actions, ICON_X,         RING_DANGER, false, "Ignorieren");
     s_unlock_btn = build_ring_col(actions, ICON_DOOR_OPEN, RING_WARN,   false, "Tür auf");
-    build_ring_col(actions, ICON_PHONE,     RING_OK,   true, "Annehmen");
+    s_accept_btn = build_ring_col(actions, ICON_PHONE,     RING_OK,     false, "Annehmen");
 
     return overlay;
 }
@@ -304,4 +312,79 @@ void scr_ringing_set_unlock_handler(lv_obj_t *overlay,
     if (!s_unlock_btn || !cb) return;
     lv_obj_add_event_cb(s_unlock_btn, cb, LV_EVENT_CLICKED, user_data);
     lv_obj_add_flag(s_unlock_btn, LV_OBJ_FLAG_CLICKABLE);
+}
+
+void scr_ringing_set_door_name(const char *door_name)
+{
+    if (s_sub_label && door_name) {
+        lv_label_set_text(s_sub_label, door_name);
+    }
+}
+
+void scr_ringing_set_accept_handler(lv_obj_t *overlay,
+                                     lv_event_cb_t cb,
+                                     void *user_data)
+{
+    (void)overlay;
+    if (!s_accept_btn || !cb) return;
+    lv_obj_add_event_cb(s_accept_btn, cb, LV_EVENT_CLICKED, user_data);
+    lv_obj_add_flag(s_accept_btn, LV_OBJ_FLAG_CLICKABLE);
+}
+
+/* ---------- Fade-In / Fade-Out ---------- */
+
+static void overlay_opa_anim_cb(void *obj, int32_t v)
+{
+    lv_obj_set_style_opa((lv_obj_t *)obj, (lv_opa_t)v, 0);
+}
+
+static void overlay_fade_out_done_cb(lv_anim_t *a)
+{
+    lv_obj_t *target = (lv_obj_t *)lv_anim_get_user_data(a);
+    if (target) {
+        lv_obj_add_flag(target, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+void scr_ringing_show(void)
+{
+    if (!s_overlay) return;
+
+    /* Bring to top so the overlay sits above stream + screensaver + settings. */
+    lv_obj_move_foreground(s_overlay);
+
+    /* Cancel any prior fade-out so they don't fight. */
+    lv_anim_delete(s_overlay, overlay_opa_anim_cb);
+
+    /* Unhide and ramp opacity from 0 to full over 400ms. */
+    lv_obj_clear_flag(s_overlay, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_opa(s_overlay, LV_OPA_TRANSP, 0);
+
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, s_overlay);
+    lv_anim_set_values(&a, LV_OPA_TRANSP, LV_OPA_COVER);
+    lv_anim_set_duration(&a, 400);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+    lv_anim_set_exec_cb(&a, overlay_opa_anim_cb);
+    lv_anim_start(&a);
+}
+
+void scr_ringing_hide(void)
+{
+    if (!s_overlay) return;
+    if (lv_obj_has_flag(s_overlay, LV_OBJ_FLAG_HIDDEN)) return;
+
+    lv_anim_delete(s_overlay, overlay_opa_anim_cb);
+
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, s_overlay);
+    lv_anim_set_values(&a, LV_OPA_COVER, LV_OPA_TRANSP);
+    lv_anim_set_duration(&a, 400);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+    lv_anim_set_exec_cb(&a, overlay_opa_anim_cb);
+    lv_anim_set_user_data(&a, s_overlay);
+    lv_anim_set_completed_cb(&a, overlay_fade_out_done_cb);
+    lv_anim_start(&a);
 }

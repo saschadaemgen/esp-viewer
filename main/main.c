@@ -207,10 +207,11 @@ static void on_reject_click(lv_event_t *e)
     (void)e;
     ESP_LOGI(TAG, "Reject button pressed");
 
-    /* Optimistic UI: hide the overlay immediately */
-    if (s_ringing_overlay) {
-        lv_obj_add_flag(s_ringing_overlay, LV_OBJ_FLAG_HIDDEN);
-    }
+    /* Optimistic UI: Fade-Out + Backlight zurueck. Klingel-Server kann
+     * uns mit doorbell.cancel das gleiche schicken, der zweite Aufruf
+     * waere idempotent. Wir gehen aber direkt so weil das die snappy
+     * UX-Reaktion ist. */
+    idle_mode_mgr_doorbell_end();
 
     if (s_active_cancel_token[0] == 0) {
         ESP_LOGW(TAG, "Reject: no active cancel_token, skipping POST");
@@ -243,10 +244,8 @@ static void on_unlock_click(lv_event_t *e)
     (void)e;
     ESP_LOGI(TAG, "Unlock button pressed");
 
-    /* Optimistic UI: hide the overlay immediately */
-    if (s_ringing_overlay) {
-        lv_obj_add_flag(s_ringing_overlay, LV_OBJ_FLAG_HIDDEN);
-    }
+    /* Optimistic UI: Fade-Out + Backlight zurueck. */
+    idle_mode_mgr_doorbell_end();
 
     if (s_active_cancel_token[0] == 0) {
         ESP_LOGW(TAG, "Unlock: no active cancel_token, skipping POST");
@@ -453,11 +452,9 @@ static void on_sse_event(const char *event_name, const char *data)
     if (strcmp(event_name, "doorbell.ring") == 0) {
         ESP_LOGW(TAG, "[SSE] >>> DOORBELL RING <<< %s", data);
 
-        /* Wake the display IMMEDIATELY (hard, no fade) so the user sees
-         * the ringing overlay without delay. */
-        idle_mode_mgr_doorbell_start();
-
-        /* Parse cancel_token from event data */
+        /* Parse cancel_token from event data ZUERST damit der
+         * Reject-Click-Handler ihn schon hat wenn das Overlay sichtbar
+         * wird. */
         cJSON *json = cJSON_Parse(data);
         if (json) {
             cJSON *token = cJSON_GetObjectItem(json, "cancel_token");
@@ -475,34 +472,16 @@ static void on_sse_event(const char *event_name, const char *data)
             ESP_LOGW(TAG, "doorbell.ring: failed to parse JSON");
         }
 
-        if (s_ringing_overlay) {
-            if (bsp_display_lock(200)) {
-                lv_obj_clear_flag(s_ringing_overlay, LV_OBJ_FLAG_HIDDEN);
-                lv_obj_move_foreground(s_ringing_overlay);
-                bsp_display_unlock();
-                ESP_LOGI(TAG, "Ringing overlay shown");
-            } else {
-                ESP_LOGW(TAG, "Ringing show: display_lock timeout");
-            }
-        } else {
-            ESP_LOGE(TAG, "Ringing show: overlay is NULL");
-        }
+        /* Visuelle Orchestrierung (Backlight 100%, Settings-Close,
+         * Mode-Switch zu Stream, Overlay-Fade-In) macht idle_mode_mgr. */
+        idle_mode_mgr_doorbell_start();
         return;
     }
 
     if (strcmp(event_name, "doorbell.cancel") == 0) {
         ESP_LOGW(TAG, "[SSE] <<< DOORBELL CANCEL >>> %s", data);
         s_active_cancel_token[0] = 0;
-        if (s_ringing_overlay) {
-            if (bsp_display_lock(200)) {
-                lv_obj_add_flag(s_ringing_overlay, LV_OBJ_FLAG_HIDDEN);
-                bsp_display_unlock();
-                ESP_LOGI(TAG, "Ringing overlay hidden");
-            } else {
-                ESP_LOGW(TAG, "Ringing hide: display_lock timeout");
-            }
-        }
-        /* Klingel ist vorbei - Backlight zurueck auf brightness_idle. */
+        /* Overlay-Fade-Out + Backlight zurueck auf brightness_idle. */
         idle_mode_mgr_doorbell_end();
         return;
     }
