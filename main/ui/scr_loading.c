@@ -101,9 +101,17 @@ lv_obj_t *scr_loading_create(void)
     lv_screen_load(s_screen);
 
     /* CARVILON-Branding mittig auf dem Screen.
-     * Stil 1:1 vom Settings-Footer (build_carvilon_footer in scr_settings.c):
-     *   Headline UI_FONT_XL, opa SECONDARY, letter_space 8
-     *   Sub      UI_FONT_BASE, opa TERTIARY, letter_space 4 */
+     *
+     * Stil 1:1 vom Settings-Footer (build_carvilon_footer in
+     * scr_settings.c). WICHTIG fuer Maintainer: die untenstehenden
+     * font/color/opa/letter_space Werte muessen byte-fuer-byte mit
+     * scr_settings.c uebereinstimmen, sonst sieht das Branding auf
+     * Loading- und Settings-Screen verschieden aus.
+     *
+     * Hierarchie:
+     *   CARVILON (head)             UI_FONT_XL   = 22px, opa secondary, ls 8
+     *   INTERCOM ESP VIEWER (sub)   UI_FONT_BASE = 14px, opa tertiary,  ls 4
+     */
     lv_obj_t *branding = lv_obj_create(s_screen);
     lv_obj_remove_style_all(branding);
     lv_obj_set_size(branding, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
@@ -116,6 +124,7 @@ lv_obj_t *scr_loading_create(void)
     lv_obj_set_style_pad_row(branding, UI_SPACE_2, 0);
     lv_obj_clear_flag(branding, LV_OBJ_FLAG_SCROLLABLE);
 
+    /* CARVILON headline */
     lv_obj_t *head = lv_label_create(branding);
     lv_label_set_text(head, "CARVILON");
     lv_obj_set_style_text_font(head, UI_FONT_XL, 0);
@@ -123,12 +132,13 @@ lv_obj_t *scr_loading_create(void)
     lv_obj_set_style_text_opa(head, UI_OPA_TEXT_SECONDARY, 0);
     lv_obj_set_style_text_letter_space(head, 8, 0);
 
-    lv_obj_t *brand_sub = lv_label_create(branding);
-    lv_label_set_text(brand_sub, "INTERCOM ESP VIEWER");
-    lv_obj_set_style_text_font(brand_sub, UI_FONT_BASE, 0);
-    lv_obj_set_style_text_color(brand_sub, UI_COLOR_TEXT, 0);
-    lv_obj_set_style_text_opa(brand_sub, UI_OPA_TEXT_TERTIARY, 0);
-    lv_obj_set_style_text_letter_space(brand_sub, 4, 0);
+    /* Sub-headline */
+    lv_obj_t *sub = lv_label_create(branding);
+    lv_label_set_text(sub, "INTERCOM ESP VIEWER");
+    lv_obj_set_style_text_font(sub, UI_FONT_BASE, 0);
+    lv_obj_set_style_text_color(sub, UI_COLOR_TEXT, 0);
+    lv_obj_set_style_text_opa(sub, UI_OPA_TEXT_TERTIARY, 0);
+    lv_obj_set_style_text_letter_space(sub, 4, 0);
 
     /* Status text + Spinner unterhalb des Brandings (Branding ist
      * vertikal zentriert, Status sitzt mit fixem Offset zum
