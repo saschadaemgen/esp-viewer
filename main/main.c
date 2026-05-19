@@ -135,6 +135,7 @@ typedef struct {
     idle_view_mode_t settings_idle_mode;
     int settings_screen_off_sec;
     language_t settings_language;
+    clock_layout_t settings_clock_layout;
 } unifix_request_t;
 
 static QueueHandle_t s_unifix_action_queue = NULL;
@@ -166,18 +167,22 @@ static void unifix_action_worker(void *arg)
         case UNIFIX_ACTION_SETTINGS_SAVE: {
             /* Echter POST /esp/settings. Server validiert gegen Allow-List. */
             const char *lang_str = (req.settings_language == LANG_EN) ? "en" : "de";
-            ESP_LOGI(TAG, "Worker: SETTINGS_SAVE idle=%s auto_ss=%d screen_off=%d brightness=%d lang=%s",
+            const char *layout_str =
+                unifix_config_clock_layout_to_str(req.settings_clock_layout);
+            ESP_LOGI(TAG, "Worker: SETTINGS_SAVE idle=%s auto_ss=%d screen_off=%d brightness=%d lang=%s clock_layout=%s",
                      unifix_config_mode_to_str(req.settings_idle_mode),
                      req.settings_screensaver_sec,
                      req.settings_screen_off_sec,
                      req.settings_brightness,
-                     lang_str);
+                     lang_str,
+                     layout_str);
             esp_err_t ss_err = unifix_client_post_settings(
                 req.settings_idle_mode,
                 req.settings_screensaver_sec,
                 req.settings_screen_off_sec,
                 req.settings_brightness,
-                lang_str);
+                lang_str,
+                layout_str);
             if (ss_err != ESP_OK) {
                 ESP_LOGW(TAG, "Worker: SETTINGS_SAVE failed: %s",
                          esp_err_to_name(ss_err));
@@ -323,12 +328,13 @@ static void on_settings_changed(const scr_settings_snapshot_t *snap,
     (void)user_data;
     if (!snap) return;
 
-    ESP_LOGI(TAG, "Settings changed: idle_mode=%s auto_ss=%ds screen_off=%ds brightness=%d lang=%d",
+    ESP_LOGI(TAG, "Settings changed: idle_mode=%s auto_ss=%ds screen_off=%ds brightness=%d lang=%d clock_layout=%s",
              unifix_config_mode_to_str(snap->idle_view_mode),
              snap->auto_screensaver_sec,
              snap->screen_off_sec,
              snap->brightness,
-             (int)snap->language);
+             (int)snap->language,
+             unifix_config_clock_layout_to_str(snap->clock_layout));
 
     /* Apply backlight + idle-mode-mgr config locally. */
     idle_mode_mgr_update_config(snap->idle_view_mode,
@@ -354,6 +360,10 @@ static void on_settings_changed(const scr_settings_snapshot_t *snap,
      * Datum sofort umrendert. */
     scr_screensaver_set_language(snap->language);
 
+    /* Uhr-Layout durchreichen - togglet HIDDEN-Flags der zwei
+     * Clock-Container ohne Re-Build (S03-09). */
+    scr_screensaver_set_clock_layout(snap->clock_layout);
+
     /* Topbar-Datum sofort neu rendern (sonst max 1s Delay durch
      * den 1s-Timer). */
     topbar_clock_tick(NULL);
@@ -368,6 +378,7 @@ static void on_settings_changed(const scr_settings_snapshot_t *snap,
             .settings_idle_mode = snap->idle_view_mode,
             .settings_screen_off_sec = snap->screen_off_sec,
             .settings_language = snap->language,
+            .settings_clock_layout = snap->clock_layout,
         };
         if (xQueueSend(s_unifix_action_queue, &req, 0) != pdTRUE) {
             ESP_LOGW(TAG, "Settings change: action queue full");
@@ -409,10 +420,11 @@ static void on_settings_close_click(lv_event_t *e)
 static void on_config_changed(const unifix_config_t *cfg)
 {
     if (!cfg) return;
-    ESP_LOGI(TAG, "Config listener: mieter='%s' location='%s' brightness=%d idle_mode=%s",
+    ESP_LOGI(TAG, "Config listener: mieter='%s' location='%s' brightness=%d idle_mode=%s clock_layout=%s",
              cfg->mieter_name, cfg->location_name,
              cfg->brightness_idle,
-             unifix_config_mode_to_str(cfg->idle_view_mode));
+             unifix_config_mode_to_str(cfg->idle_view_mode),
+             unifix_config_clock_layout_to_str(cfg->clock_layout));
 
     /* idle_mode_mgr ist thread-safe intern, kein LVGL-lock noetig. */
     idle_mode_mgr_update_config(cfg->idle_view_mode,
@@ -434,6 +446,10 @@ static void on_config_changed(const unifix_config_t *cfg)
         scr_idle_set_door_name(cfg->location_name);
         scr_ringing_set_door_name(cfg->location_name);
     }
+
+    /* S03-09: Server kann clock_layout aendern (z.B. anderes Geraet
+     * des selben Mieters hat es gesetzt). Setter ist idempotent. */
+    scr_screensaver_set_clock_layout(cfg->clock_layout);
 
     bsp_display_unlock();
 }
@@ -637,6 +653,7 @@ static void on_got_ip(void)
                 .initial_screen_off_sec      = cfg.screen_off_after_sec,
                 .initial_brightness          = cfg.brightness_idle,
                 .initial_language            = time_sync_lang_from_str(cfg.language),
+                .initial_clock_layout        = cfg.clock_layout,
             };
             scr_settings_set_brightness_preview_cb(on_brightness_preview, NULL);
             lv_obj_t *settings_view = scr_settings_build(modes, &sdata);
@@ -652,6 +669,11 @@ static void on_got_ip(void)
             language_t initial_lang = time_sync_lang_from_str(cfg.language);
             lv_obj_t *screensaver_view = scr_screensaver_build(modes, initial_lang);
             scr_idle_register_screensaver_view(screensaver_view);
+
+            /* Initial clock-layout (S03-09). Setter ist idempotent;
+             * Default beim Build ist VERTICAL, ein non-default Wert
+             * aus der Config flippt die Visibility hier auf HORIZONTAL. */
+            scr_screensaver_set_clock_layout(cfg.clock_layout);
 
             /* Initial mode-switch based on cfg.idle_view_mode.
              * SCREENSAVER -> show clock/weather. LIVESTREAM -> stream.

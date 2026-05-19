@@ -6,6 +6,7 @@
 #include "ui_tokens.h"
 #include "lucide_22.h"
 #include "montserrat_200.h"
+#include "montserrat_140.h"   /* S03-09 horizontal clock font */
 #include "services/time_sync.h"
 
 #include "lvgl.h"
@@ -27,6 +28,12 @@ typedef struct {
     lv_obj_t *clock_group;
     lv_obj_t *clock_hour;
     lv_obj_t *clock_minute;
+
+    /* Horizontal classic clock (S03-09): a single label "HH:MM"
+     * in montserrat_140. Sibling of clock_group; only one of the
+     * two is visible at a time, controlled by current_layout. */
+    lv_obj_t *clock_horizontal;
+    clock_layout_t current_layout;
 
     /* Date below clock */
     lv_obj_t *date_label;
@@ -123,11 +130,13 @@ static void tick_cb(lv_timer_t *t)
 {
     (void)t;
 
-    /* Bei nicht-synced: beide Labels leer (montserrat_200 Range hat
-     * nur Ziffern + Doppelpunkt, "--" wuerde Kaesten zeigen). */
+    /* Bei nicht-synced: alle Clock-Labels leer. montserrat_200 und
+     * montserrat_140 haben beide nur Ziffern + Doppelpunkt im Range,
+     * "--" wuerde Kaesten zeigen. */
     if (!time_sync_is_synced()) {
-        if (s.clock_hour)   lv_label_set_text(s.clock_hour, "");
-        if (s.clock_minute) lv_label_set_text(s.clock_minute, "");
+        if (s.clock_hour)       lv_label_set_text(s.clock_hour, "");
+        if (s.clock_minute)     lv_label_set_text(s.clock_minute, "");
+        if (s.clock_horizontal) lv_label_set_text(s.clock_horizontal, "");
         return;
     }
 
@@ -136,19 +145,36 @@ static void tick_cb(lv_timer_t *t)
     struct tm tm_local;
     localtime_r(&now, &tm_local);
 
+    bool hour_changed = (tm_local.tm_hour != s.last_hour);
+    bool min_changed  = (tm_local.tm_min  != s.last_minute);
+
     /* Stunden + Minuten getrennt rendern, nur bei Aenderung labeln
-     * (Minute aendert sich 60x/h, Stunde 1x/h). Spart LVGL-invalidate. */
-    if (tm_local.tm_hour != s.last_hour) {
+     * (Minute aendert sich 60x/h, Stunde 1x/h). Spart LVGL-invalidate.
+     * Wir fuettern beide Layouts unabhaengig vom aktuell sichtbaren -
+     * der Cost ist minimal (Setter no-op wenn HIDDEN war's nicht im
+     * Display-Buffer), und ein Switch ohne Re-Render des aktiven
+     * Texts ist garantiert konsistent. */
+    if (hour_changed) {
         s.last_hour = tm_local.tm_hour;
         char hh[4];
         snprintf(hh, sizeof(hh), "%02d", tm_local.tm_hour);
         if (s.clock_hour) lv_label_set_text(s.clock_hour, hh);
     }
-    if (tm_local.tm_min != s.last_minute) {
+    if (min_changed) {
         s.last_minute = tm_local.tm_min;
         char mm[4];
         snprintf(mm, sizeof(mm), "%02d", tm_local.tm_min);
         if (s.clock_minute) lv_label_set_text(s.clock_minute, mm);
+    }
+
+    /* Horizontal "HH:MM" - rendert beide auf einmal. Update wenn
+     * Stunde ODER Minute sich geaendert hat, oder beim ersten Tick
+     * (last_minute == -1 nach Build/Unsynced-Phase). */
+    if (s.clock_horizontal && (hour_changed || min_changed)) {
+        char hhmm[8];
+        snprintf(hhmm, sizeof(hhmm), "%02d:%02d",
+                 tm_local.tm_hour, tm_local.tm_min);
+        lv_label_set_text(s.clock_horizontal, hhmm);
     }
 
     /* Date - only redraw on day change */
@@ -173,6 +199,7 @@ lv_obj_t *scr_screensaver_build(lv_obj_t *parent, language_t lang)
     s.last_minute = -1;
     s.last_wday = -1;
     s.last_mday = -1;
+    s.current_layout = CLOCK_LAYOUT_VERTICAL;
 
     /* Root - fills parent (modes-container slot) */
     lv_obj_t *root = lv_obj_create(parent);
@@ -238,6 +265,26 @@ lv_obj_t *scr_screensaver_build(lv_obj_t *parent, language_t lang)
     lv_obj_set_style_text_letter_space(minute, 4, 0);
     lv_obj_set_style_text_align(minute, LV_TEXT_ALIGN_CENTER, 0);
     s.clock_minute = minute;
+
+    /* --- Horizontal classic clock (S03-09) ---
+     * Sibling-Label im selben Flex-Column wie clock_group. Beide
+     * sind im Boot-Build "im Flex", einer ist HIDDEN. Toggle via
+     * scr_screensaver_set_clock_layout() flippt nur die Visibility.
+     * Default: HIDDEN (Vertikal aktiv).
+     *
+     * montserrat_140 hat das gleiche Range-Layout wie montserrat_200
+     * (0x30-0x3A Ziffern + Doppelpunkt). Doppelpunkt darf hier
+     * gerendert werden, anders als beim Bildschirmschoner-Vertikal
+     * wo nur Ziffern erlaubt sind. */
+    lv_obj_t *hclock = lv_label_create(root);
+    lv_label_set_text(hclock, "");
+    lv_obj_set_style_text_font(hclock, &montserrat_140, 0);
+    lv_obj_set_style_text_color(hclock, UI_COLOR_TEXT, 0);
+    lv_obj_set_style_text_opa(hclock, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_letter_space(hclock, 4, 0);
+    lv_obj_set_style_text_align(hclock, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_add_flag(hclock, LV_OBJ_FLAG_HIDDEN);
+    s.clock_horizontal = hclock;
 
     /* --- Date (small, under clock) --- */
     lv_obj_t *date = lv_label_create(root);
@@ -342,6 +389,20 @@ void scr_screensaver_set_language(language_t lang)
     /* Rebuild badge text if visible */
     if (s.unread_count > 0) {
         scr_screensaver_set_unread_count(s.unread_count);
+    }
+}
+
+void scr_screensaver_set_clock_layout(clock_layout_t layout)
+{
+    if (s.current_layout == layout) return;
+    s.current_layout = layout;
+
+    if (layout == CLOCK_LAYOUT_HORIZONTAL) {
+        if (s.clock_group)      lv_obj_add_flag(s.clock_group, LV_OBJ_FLAG_HIDDEN);
+        if (s.clock_horizontal) lv_obj_clear_flag(s.clock_horizontal, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        if (s.clock_group)      lv_obj_clear_flag(s.clock_group, LV_OBJ_FLAG_HIDDEN);
+        if (s.clock_horizontal) lv_obj_add_flag(s.clock_horizontal, LV_OBJ_FLAG_HIDDEN);
     }
 }
 
