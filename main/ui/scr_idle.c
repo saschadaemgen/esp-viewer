@@ -263,6 +263,9 @@ static lv_obj_t *build_stream(lv_obj_t *parent, const scr_idle_data_t *data)
     lv_obj_set_flex_align(hint, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_row(hint, UI_SPACE_6, 0);
     lv_obj_clear_flag(hint, LV_OBJ_FLAG_SCROLLABLE);
+    /* Dekorations-Container - keine eigene Interaktion. CLICKABLE raus
+     * damit Tap auf Stream auf den stream-root durchfaellt (BUG-5). */
+    lv_obj_clear_flag(hint, LV_OBJ_FLAG_CLICKABLE);
 
     lv_obj_t *orb = lv_obj_create(hint);
     lv_obj_remove_style_all(orb);
@@ -274,6 +277,7 @@ static lv_obj_t *build_stream(lv_obj_t *parent, const scr_idle_data_t *data)
     lv_obj_set_style_border_opa(orb, 15, 0);
     lv_obj_set_style_border_width(orb, 1, 0);
     lv_obj_clear_flag(orb, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(orb, LV_OBJ_FLAG_CLICKABLE);
 
     lv_obj_t *dot = lv_obj_create(orb);
     lv_obj_remove_style_all(dot);
@@ -287,6 +291,7 @@ static lv_obj_t *build_stream(lv_obj_t *parent, const scr_idle_data_t *data)
     lv_obj_set_style_shadow_width(dot, 12, 0);
     lv_obj_set_style_shadow_opa(dot, 65, 0);
     lv_obj_clear_flag(dot, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(dot, LV_OBJ_FLAG_CLICKABLE);
     ui_anim_breathe(dot);
 
     lv_obj_t *txt = lv_obj_create(hint);
@@ -298,6 +303,7 @@ static lv_obj_t *build_stream(lv_obj_t *parent, const scr_idle_data_t *data)
     lv_obj_set_flex_align(txt, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_row(txt, 4, 0);
     lv_obj_clear_flag(txt, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(txt, LV_OBJ_FLAG_CLICKABLE);
 
     lv_obj_t *lbl1 = lv_label_create(txt);
     lv_label_set_text(lbl1, "Bereit");
@@ -322,6 +328,7 @@ static lv_obj_t *build_stream(lv_obj_t *parent, const scr_idle_data_t *data)
     lv_obj_set_flex_align(meta, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(meta, UI_SPACE_2, 0);
     lv_obj_clear_flag(meta, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(meta, LV_OBJ_FLAG_CLICKABLE);
 
     lv_obj_t *meta_dot = lv_obj_create(meta);
     lv_obj_remove_style_all(meta_dot);
@@ -330,6 +337,7 @@ static lv_obj_t *build_stream(lv_obj_t *parent, const scr_idle_data_t *data)
     lv_obj_set_style_bg_color(meta_dot, UI_COLOR_TEXT, 0);
     lv_obj_set_style_bg_opa(meta_dot, UI_OPA_TEXT_QUATERNARY, 0);
     lv_obj_clear_flag(meta_dot, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(meta_dot, LV_OBJ_FLAG_CLICKABLE);
 
     char meta_text[64];
     snprintf(meta_text, sizeof(meta_text), "cam  %s", data->door_name);

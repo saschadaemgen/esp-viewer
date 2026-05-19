@@ -202,6 +202,12 @@ static void mjpeg_task(void *arg)
         lv_canvas_set_buffer(s_video_canvas, s_canvas_buf, 800, 1280, LV_COLOR_FORMAT_RGB888);
         lv_obj_set_size(s_video_canvas, lv_pct(100), lv_pct(100));
         lv_obj_center(s_video_canvas);
+        /* Canvas ist nur Render-Target, keine Interaktion. CLICKABLE-Flag
+         * raus damit Touch-Events durchfallen auf den darunterliegenden
+         * stream_view (der einen on_stream_click_toggle-Handler hat).
+         * LVGL 9.x: LV_EVENT_CLICKED bubblet NICHT default, daher musste
+         * der Canvas die Klicks vorher schlucken. (S03-08 BUG-5-Fix.) */
+        lv_obj_clear_flag(s_video_canvas, LV_OBJ_FLAG_CLICKABLE);
         bsp_display_unlock();
     }
 
