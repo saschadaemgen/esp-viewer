@@ -11,7 +11,10 @@
 #include "esp_err.h"
 #include "esp_http_client.h"
 
+#include "cJSON.h"
+
 #include "device_token.h"
+#include "unifix_config.h"   /* fuer unifix_config_mode_to_str */
 
 static const char *TAG = "UNIFIX";
 
@@ -317,5 +320,304 @@ esp_err_t unifix_client_unlock(const char *event_id)
         return ESP_ERR_INVALID_RESPONSE;
     }
 
+    return ESP_OK;
+}
+
+
+/* ============================================================
+ * POST /esp/settings
+ * ============================================================ */
+
+esp_err_t unifix_client_post_settings(idle_view_mode_t idle_view_mode,
+                                       int auto_screensaver_seconds,
+                                       int screen_off_after_sec,
+                                       int brightness_idle,
+                                       const char *language,
+                                       const char *clock_layout)
+{
+    if (!s_token_loaded) {
+        ESP_LOGE(TAG, "Client not initialized");
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (!language) {
+        ESP_LOGE(TAG, "post_settings: language is NULL");
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (!clock_layout) {
+        ESP_LOGE(TAG, "post_settings: clock_layout is NULL");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    /* Clamp brightness defensively (server validates too but no need
+     * to send obviously-bad values). */
+    if (brightness_idle < 0) brightness_idle = 0;
+    if (brightness_idle > 100) brightness_idle = 100;
+
+    char url[128];
+    snprintf(url, sizeof(url), "%s/esp/settings", UNIFIX_BASE_URL);
+
+    char body[384];
+    int body_len = snprintf(body, sizeof(body),
+        "{"
+        "\"idle_view_mode\":\"%s\","
+        "\"auto_screensaver_seconds\":%d,"
+        "\"screen_off_after_sec\":%d,"
+        "\"brightness_idle\":%d,"
+        "\"language\":\"%s\","
+        "\"clock_layout\":\"%s\""
+        "}",
+        unifix_config_mode_to_str(idle_view_mode),
+        auto_screensaver_seconds,
+        screen_off_after_sec,
+        brightness_idle,
+        language,
+        clock_layout);
+
+    if (body_len < 0 || body_len >= (int)sizeof(body)) {
+        ESP_LOGE(TAG, "post_settings: body buffer too small");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    char auth_header[DEVICE_TOKEN_MAX_LEN + 16];
+    build_auth_header(auth_header, sizeof(auth_header));
+
+    esp_http_client_config_t config = {
+        .url = url,
+        .method = HTTP_METHOD_POST,
+        .timeout_ms = HTTP_TIMEOUT_MS,
+        .event_handler = http_event_handler,
+        .disable_auto_redirect = true,
+    };
+
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    if (!client) {
+        ESP_LOGE(TAG, "esp_http_client_init failed");
+        memset(auth_header, 0, sizeof(auth_header));
+        return ESP_FAIL;
+    }
+
+    esp_http_client_set_header(client, "Authorization", auth_header);
+    esp_http_client_set_header(client, "Content-Type", "application/json");
+    esp_http_client_set_header(client, "Accept", "application/json");
+    esp_http_client_set_post_field(client, body, body_len);
+
+    memset(auth_header, 0, sizeof(auth_header));
+
+    s_response_len = 0;
+    s_response_buf[0] = 0;
+
+    esp_err_t err = esp_http_client_perform(client);
+    int status = esp_http_client_get_status_code(client);
+    esp_http_client_cleanup(client);
+
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "post_settings HTTP failed: %s", esp_err_to_name(err));
+        return ESP_FAIL;
+    }
+
+    ESP_LOGI(TAG, "post_settings status=%d, body='%.*s'",
+             status, (int)s_response_len, s_response_buf);
+
+    if (status == 401) {
+        ESP_LOGE(TAG, "post_settings: Unauthorized");
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    if (status == 400) {
+        ESP_LOGE(TAG, "post_settings: server rejected values (400)");
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    if (status < 200 || status >= 300) {
+        ESP_LOGE(TAG, "post_settings: bad status %d", status);
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+
+    return ESP_OK;
+}
+
+
+/* ============================================================
+ * GET /esp/weather
+ * ============================================================ */
+
+esp_err_t unifix_client_get_weather(unifix_weather_t *out)
+{
+    if (!s_token_loaded) {
+        ESP_LOGE(TAG, "Client not initialized");
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (!out) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    /* Pre-fill defaults so partial parses still yield a usable struct */
+    memset(out, 0, sizeof(*out));
+
+    char url[128];
+    snprintf(url, sizeof(url), "%s/esp/weather", UNIFIX_BASE_URL);
+
+    char auth_header[DEVICE_TOKEN_MAX_LEN + 16];
+    build_auth_header(auth_header, sizeof(auth_header));
+
+    esp_http_client_config_t config = {
+        .url = url,
+        .method = HTTP_METHOD_GET,
+        .timeout_ms = HTTP_TIMEOUT_MS,
+        .event_handler = http_event_handler,
+        .disable_auto_redirect = true,
+    };
+
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    if (!client) {
+        ESP_LOGE(TAG, "esp_http_client_init failed");
+        memset(auth_header, 0, sizeof(auth_header));
+        return ESP_FAIL;
+    }
+
+    esp_http_client_set_header(client, "Authorization", auth_header);
+    esp_http_client_set_header(client, "Accept", "application/json");
+
+    memset(auth_header, 0, sizeof(auth_header));
+
+    s_response_len = 0;
+    s_response_buf[0] = 0;
+
+    esp_err_t err = esp_http_client_perform(client);
+    int status = esp_http_client_get_status_code(client);
+    esp_http_client_cleanup(client);
+
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "get_weather HTTP failed: %s", esp_err_to_name(err));
+        return ESP_FAIL;
+    }
+
+    if (status == 401) {
+        ESP_LOGE(TAG, "get_weather: Unauthorized");
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    if (status < 200 || status >= 300) {
+        ESP_LOGE(TAG, "get_weather: bad status %d", status);
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+
+    /* Parse JSON response */
+    cJSON *root = cJSON_Parse(s_response_buf);
+    if (!root) {
+        ESP_LOGE(TAG, "get_weather: JSON parse failed");
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+
+    cJSON *temp = cJSON_GetObjectItem(root, "temp_c");
+    if (cJSON_IsNumber(temp)) {
+        out->temp_c = temp->valueint;
+    }
+
+    cJSON *cond = cJSON_GetObjectItem(root, "condition_text");
+    if (cJSON_IsString(cond) && cond->valuestring) {
+        snprintf(out->condition_text, sizeof(out->condition_text),
+                 "%s", cond->valuestring);
+    }
+
+    cJSON *icon = cJSON_GetObjectItem(root, "icon_code");
+    if (cJSON_IsString(icon) && icon->valuestring) {
+        snprintf(out->icon_code, sizeof(out->icon_code),
+                 "%s", icon->valuestring);
+    }
+
+    cJSON *upd = cJSON_GetObjectItem(root, "updated_at");
+    if (cJSON_IsNumber(upd)) {
+        out->updated_at = (int64_t)upd->valuedouble;
+    }
+
+    cJSON_Delete(root);
+
+    ESP_LOGI(TAG, "Weather: %d°C %s (%s) @ %lld",
+             out->temp_c, out->condition_text, out->icon_code,
+             (long long)out->updated_at);
+
+    return ESP_OK;
+}
+
+
+/* ============================================================
+ * GET /esp/unread-count
+ * ============================================================ */
+
+esp_err_t unifix_client_get_unread_count(int *out_count)
+{
+    if (!s_token_loaded) {
+        ESP_LOGE(TAG, "Client not initialized");
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (!out_count) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    *out_count = 0;
+
+    char url[128];
+    snprintf(url, sizeof(url), "%s/esp/unread-count", UNIFIX_BASE_URL);
+
+    char auth_header[DEVICE_TOKEN_MAX_LEN + 16];
+    build_auth_header(auth_header, sizeof(auth_header));
+
+    esp_http_client_config_t config = {
+        .url = url,
+        .method = HTTP_METHOD_GET,
+        .timeout_ms = HTTP_TIMEOUT_MS,
+        .event_handler = http_event_handler,
+        .disable_auto_redirect = true,
+    };
+
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    if (!client) {
+        ESP_LOGE(TAG, "esp_http_client_init failed");
+        memset(auth_header, 0, sizeof(auth_header));
+        return ESP_FAIL;
+    }
+
+    esp_http_client_set_header(client, "Authorization", auth_header);
+    esp_http_client_set_header(client, "Accept", "application/json");
+
+    memset(auth_header, 0, sizeof(auth_header));
+
+    s_response_len = 0;
+    s_response_buf[0] = 0;
+
+    esp_err_t err = esp_http_client_perform(client);
+    int status = esp_http_client_get_status_code(client);
+    esp_http_client_cleanup(client);
+
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "get_unread_count HTTP failed: %s", esp_err_to_name(err));
+        return ESP_FAIL;
+    }
+
+    if (status == 401) {
+        ESP_LOGE(TAG, "get_unread_count: Unauthorized");
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    if (status < 200 || status >= 300) {
+        ESP_LOGE(TAG, "get_unread_count: bad status %d", status);
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+
+    cJSON *root = cJSON_Parse(s_response_buf);
+    if (!root) {
+        ESP_LOGE(TAG, "get_unread_count: JSON parse failed");
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+
+    cJSON *count = cJSON_GetObjectItem(root, "count");
+    if (cJSON_IsNumber(count)) {
+        *out_count = count->valueint;
+    } else {
+        cJSON_Delete(root);
+        ESP_LOGE(TAG, "get_unread_count: missing 'count' field");
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+
+    cJSON_Delete(root);
+
+    ESP_LOGI(TAG, "Unread count: %d", *out_count);
     return ESP_OK;
 }
