@@ -57,6 +57,25 @@ const char *unifix_config_mode_to_str(idle_view_mode_t mode);
  */
 idle_view_mode_t unifix_config_mode_from_str(const char *s);
 
+/* ---------------- Clock-Layout enum (S03-09) ---------------- */
+
+typedef enum {
+    CLOCK_LAYOUT_VERTICAL = 0,    /* Pixel-Style HH / MM stacked (Default) */
+    CLOCK_LAYOUT_HORIZONTAL,      /* Klassisch HH:MM in einer Zeile */
+} clock_layout_t;
+
+/**
+ * Wandelt einen clock_layout in seinen Server-String um
+ * ("vertical" | "horizontal"). Bei unbekanntem Enum: "vertical".
+ */
+const char *unifix_config_clock_layout_to_str(clock_layout_t v);
+
+/**
+ * Parst einen Server-String in einen clock_layout.
+ * Bei unbekanntem oder NULL-String: CLOCK_LAYOUT_VERTICAL.
+ */
+clock_layout_t unifix_config_clock_layout_from_str(const char *s);
+
 /* ---------------- Defaults (compile-time) ---------------- */
 
 #define UNIFIX_CONFIG_DEFAULT_MIETER_NAME            ""
@@ -66,6 +85,7 @@ idle_view_mode_t unifix_config_mode_from_str(const char *s);
 #define UNIFIX_CONFIG_DEFAULT_AUTO_SCREENSAVER_SEC   60
 #define UNIFIX_CONFIG_DEFAULT_SCREEN_OFF_SEC         0   /* 0 = nie */
 #define UNIFIX_CONFIG_DEFAULT_IDLE_VIEW_MODE         IDLE_MODE_SCREENSAVER
+#define UNIFIX_CONFIG_DEFAULT_CLOCK_LAYOUT           CLOCK_LAYOUT_VERTICAL
 
 /* ---------------- Field-size limits (NUL-terminated) ---------------- */
 
@@ -84,6 +104,7 @@ typedef struct {
     int              auto_screensaver_seconds;   /* 0/30/60/300/600 */
     int              screen_off_after_sec;       /* 0/30/60/300/600/1800 */
     int              brightness_idle;            /* 0..100 percent */
+    clock_layout_t   clock_layout;               /* vertikal / horizontal */
 } unifix_config_t;
 
 /* ---------------- Listener pattern ---------------- */
