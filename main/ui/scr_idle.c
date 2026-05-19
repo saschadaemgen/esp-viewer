@@ -605,49 +605,20 @@ void scr_idle_toggle_idle_mode(void)
     }
 }
 
-/* Animation exec callback: moves an obj to the y value */
-static void anim_set_y_cb(void *var, int32_t v)
-{
-    lv_obj_set_y((lv_obj_t *)var, v);
-}
-
-static void start_slide(lv_obj_t *target, int from_y, int to_y)
-{
-    if (!target) return;
-    lv_obj_set_y(target, from_y);
-
-    lv_anim_t a;
-    lv_anim_init(&a);
-    lv_anim_set_var(&a, target);
-    lv_anim_set_values(&a, from_y, to_y);
-    lv_anim_set_duration(&a, 200);
-    lv_anim_set_exec_cb(&a, anim_set_y_cb);
-    lv_anim_set_path_cb(&a, lv_anim_path_linear);
-    lv_anim_start(&a);
-}
-
-/* Animation completion callback: when sliding off, also hide it
- * so it does not poke through underneath the topbar or actions-bar. */
-static void slide_done_hide_cb(lv_anim_t *a)
-{
-    lv_obj_t *target = (lv_obj_t *)lv_anim_get_user_data(a);
-    if (target) {
-        lv_obj_add_flag(target, LV_OBJ_FLAG_HIDDEN);
-    }
-}
-
 void scr_idle_show_settings(void)
 {
     if (!s_refs.settings_view || !s_refs.stream_view) return;
     if (s_refs.settings_shown) return;
 
-    ESP_LOGI(TAG, "Show settings (slide up)");
+    ESP_LOGI(TAG, "Show settings (instant)");
 
-    lv_coord_t h = lv_obj_get_height(s_refs.modes_container);
-    if (h <= 0) h = 800;
+    /* Y-Position zuruecksetzen falls vorher per Slide verschoben
+     * (Schutz gegen Code, der das Y geaendert haben koennte). */
+    lv_obj_set_y(s_refs.settings_view, 0);
 
-    /* Ensure visible before animation. The view was hidden either by
-     * register_settings_view (boot) or by the previous show_stream(). */
+    /* Sofort sichtbar machen - keine Slide-Animation mehr, ESP-Render
+     * ruckelte zu stark (S03-09-EXTRA). Instant Show wie Mode-Switch
+     * Stream <-> Bildschirmschoner. */
     lv_obj_clear_flag(s_refs.settings_view, LV_OBJ_FLAG_HIDDEN);
 
     /* WICHTIG (FIX01): settings_view nach vorn ziehen, damit es ueber
@@ -658,9 +629,6 @@ void scr_idle_show_settings(void)
      * worauf das verdeckte settings_view sichtbar wurde (BUG-B). */
     lv_obj_move_foreground(s_refs.settings_view);
 
-    /* Stream stays put; only the settings view slides up over it. */
-    start_slide(s_refs.settings_view, h, 0);
-
     s_refs.settings_shown = true;
 }
 
@@ -669,24 +637,10 @@ void scr_idle_show_stream(void)
     if (!s_refs.settings_view || !s_refs.stream_view) return;
     if (!s_refs.settings_shown) return;
 
-    lv_coord_t h = lv_obj_get_height(s_refs.modes_container);
-    if (h <= 0) h = 800;
+    ESP_LOGI(TAG, "Hide settings (instant)");
 
-    /* Settings slides back down off-screen, stream stays put underneath.
-     * Animation completes, then HIDDEN flag stops residual rendering. */
-    lv_anim_delete(s_refs.settings_view, anim_set_y_cb);
-    lv_obj_set_y(s_refs.settings_view, 0);
-
-    lv_anim_t a;
-    lv_anim_init(&a);
-    lv_anim_set_var(&a, s_refs.settings_view);
-    lv_anim_set_values(&a, 0, h);
-    lv_anim_set_duration(&a, 200);
-    lv_anim_set_path_cb(&a, lv_anim_path_linear);
-    lv_anim_set_exec_cb(&a, anim_set_y_cb);
-    lv_anim_set_user_data(&a, s_refs.settings_view);
-    lv_anim_set_completed_cb(&a, slide_done_hide_cb);
-    lv_anim_start(&a);
+    /* Sofort verstecken - keine Slide-Animation mehr (S03-09-EXTRA). */
+    lv_obj_add_flag(s_refs.settings_view, LV_OBJ_FLAG_HIDDEN);
 
     s_refs.settings_shown = false;
 }
