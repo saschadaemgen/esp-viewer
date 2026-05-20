@@ -6,6 +6,7 @@
 
 #include <string.h>
 #include <stdio.h>
+#include <math.h>
 
 #include "esp_log.h"
 #include "esp_err.h"
@@ -499,13 +500,19 @@ esp_err_t unifix_client_get_weather(unifix_weather_t *out)
         return ESP_ERR_INVALID_RESPONSE;
     }
 
-    /* TEMP DEBUG S03-10: rohen Response loggen zur Diagnose.
-     * Server liefert condition_text + icon_code leer - wir muessen
-     * sehen ob das schon im Wire-Format leer ist oder ob unser
-     * Parser die Felder verfehlt. Entfernen sobald geklaert. */
-    ESP_LOGI(TAG, "get_weather RAW response: %s", s_response_buf);
-
-    /* Parse JSON response */
+    /* Parse JSON response.
+     *
+     * Echtes Server-Schema (per RAW-Log S03-10-DEBUG verifiziert):
+     *   {
+     *     "temp_c":       15.4,
+     *     "weather_code": 3,
+     *     "description":  "Bewoelkt",
+     *     "icon":         "cloud",
+     *     "fetched_at":   "2026-05-20T10:47:41.733140839+02:00"
+     *   }
+     *
+     * Wir lesen temp_c, description, icon. weather_code und
+     * fetched_at brauchen wir heute nicht. */
     cJSON *root = cJSON_Parse(s_response_buf);
     if (!root) {
         ESP_LOGE(TAG, "get_weather: JSON parse failed");
@@ -514,31 +521,33 @@ esp_err_t unifix_client_get_weather(unifix_weather_t *out)
 
     cJSON *temp = cJSON_GetObjectItem(root, "temp_c");
     if (cJSON_IsNumber(temp)) {
-        out->temp_c = temp->valueint;
+        /* Server liefert float (z.B. 15.4). Anzeige ist ganzzahlig,
+         * wir runden statt abzuschneiden - lround handhabt
+         * Negativzahlen korrekt (Wintermonate). */
+        out->temp_c = (int)lround(temp->valuedouble);
     }
 
-    cJSON *cond = cJSON_GetObjectItem(root, "condition_text");
+    /* Server liefert "description" (nicht "condition_text") */
+    cJSON *cond = cJSON_GetObjectItem(root, "description");
     if (cJSON_IsString(cond) && cond->valuestring) {
         snprintf(out->condition_text, sizeof(out->condition_text),
                  "%s", cond->valuestring);
     }
 
-    cJSON *icon = cJSON_GetObjectItem(root, "icon_code");
+    /* Server liefert "icon" (nicht "icon_code") */
+    cJSON *icon = cJSON_GetObjectItem(root, "icon");
     if (cJSON_IsString(icon) && icon->valuestring) {
         snprintf(out->icon_code, sizeof(out->icon_code),
                  "%s", icon->valuestring);
     }
 
-    cJSON *upd = cJSON_GetObjectItem(root, "updated_at");
-    if (cJSON_IsNumber(upd)) {
-        out->updated_at = (int64_t)upd->valuedouble;
-    }
+    /* fetched_at kommt als ISO-String, nicht als Number - heute
+     * nicht aktiv genutzt. updated_at-Feld im struct bleibt 0. */
 
     cJSON_Delete(root);
 
-    ESP_LOGI(TAG, "Weather: %d°C %s (%s) @ %lld",
-             out->temp_c, out->condition_text, out->icon_code,
-             (long long)out->updated_at);
+    ESP_LOGI(TAG, "Weather: %d°C %s (%s)",
+             out->temp_c, out->condition_text, out->icon_code);
 
     return ESP_OK;
 }
