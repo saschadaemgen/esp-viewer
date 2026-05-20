@@ -67,19 +67,23 @@ static scr_screensaver_state_t s = {0};
 
 static const char *weather_icon_for(const char *code)
 {
+    /* Master-Chat 19.05.2026: korrigiertes 9-Icon-Mapping.
+     * Vorherige Variante hatte cloud-snow / cloud-hail / wind die
+     * der Server gar nicht mehr liefert. Plus cloud-sun und
+     * snowflake / cloud-rain-wind sind neu. */
     if (!code || code[0] == 0) return ICON_CLOUD;
 
     if (strcmp(code, "sun")             == 0) return ICON_SUN;
+    if (strcmp(code, "cloud-sun")       == 0) return ICON_CLOUD_SUN;
     if (strcmp(code, "cloud")           == 0) return ICON_CLOUD;
-    if (strcmp(code, "cloud-rain")      == 0) return ICON_CLOUD_RAIN;
-    if (strcmp(code, "cloud-snow")      == 0) return ICON_CLOUD_SNOW;
     if (strcmp(code, "cloud-fog")       == 0) return ICON_CLOUD_FOG;
-    if (strcmp(code, "cloud-lightning") == 0) return ICON_CLOUD_LIGHTNING;
     if (strcmp(code, "cloud-drizzle")   == 0) return ICON_CLOUD_DRIZZLE;
-    if (strcmp(code, "cloud-hail")      == 0) return ICON_CLOUD_HAIL;
-    if (strcmp(code, "wind")            == 0) return ICON_WIND;
+    if (strcmp(code, "cloud-rain")      == 0) return ICON_CLOUD_RAIN;
+    if (strcmp(code, "cloud-rain-wind") == 0) return ICON_CLOUD_RAIN_WIND;
+    if (strcmp(code, "snowflake")       == 0) return ICON_SNOWFLAKE;
+    if (strcmp(code, "cloud-lightning") == 0) return ICON_CLOUD_LIGHTNING;
 
-    return ICON_CLOUD;
+    return ICON_CLOUD;   /* Fallback fuer unbekannte Codes */
 }
 
 /* ============================================================
