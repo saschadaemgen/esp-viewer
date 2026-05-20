@@ -330,7 +330,7 @@ void idle_mode_mgr_doorbell_end(void)
              s_doorbell_saved_was_screensaver ? "SCREENSAVER" : "STREAM");
 
     if (bsp_display_lock(50)) {
-        scr_ringing_hide();  /* 400ms fade-out */
+        scr_ringing_hide();  /* instant hide + canvas detach (S4-03) */
 
         /* S4-01: Modus restoren. Wenn der User vor der Klingel im
          * Bildschirmschoner war, kehrt er dahin zurueck. Backlight

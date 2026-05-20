@@ -43,6 +43,45 @@ extern "C" {
  */
 void stream_pipeline_start(lv_obj_t *parent);
 
+/**
+ * Temporaer den Stream-Canvas in einen anderen Eltern-Container
+ * verschieben (Klingel-Overlay).
+ *
+ * Verwendung (S4-03): waehrend der Klingel-Anzeige wird der existierende
+ * Single-Canvas ins fullscreen Klingel-Overlay reparented, damit der
+ * Live-Stream als Vollbild-Hintergrund hinter Bell + Buttons sichtbar
+ * wird. Beim Klingel-Ende wird er via stream_pipeline_detach_from_overlay
+ * zurueckgesetzt.
+ *
+ * Caller-Verantwortung:
+ * - Z-Order: der Canvas wird per lv_obj_set_parent als LETZTES Kind im
+ *   neuen Parent angehaengt. Wer eine bestimmte Z-Position braucht,
+ *   ruft lv_obj_move_to_index() auf dem Return-Pointer auf.
+ * - Wenn der Pipeline-Task noch nicht oder nicht mehr lebt (kein Canvas
+ *   erzeugt), gibt die Funktion NULL zurueck und macht nichts.
+ *
+ * Thread-Safety: nimmt intern bsp_display_lock(100). Recursive-Mutex
+ * macht nested-locking von einem bereits gelockten Caller safe.
+ *
+ * @param new_parent  Neuer Parent-Container (z.B. das Ringing-Overlay).
+ *                    NULL ist No-Op und gibt NULL zurueck.
+ *
+ * @return Pointer auf den Canvas (zum optionalen Z-Order-Positionieren)
+ *         oder NULL bei Fehler / no-op.
+ */
+lv_obj_t *stream_pipeline_attach_to_overlay(lv_obj_t *new_parent);
+
+/**
+ * Den Stream-Canvas zurueck zu seinem Original-Parent (stream_view in
+ * scr_idle) verschieben. KRITISCH: muss auf JEDEM Klingel-Schliess-Pfad
+ * laufen (cancel / reject / accept), sonst bleibt der Canvas Kind eines
+ * versteckten Overlays und der Idle-Stream wird nach der ersten Klingel
+ * schwarz.
+ *
+ * Thread-Safety: nimmt intern bsp_display_lock(100).
+ */
+void stream_pipeline_detach_from_overlay(void);
+
 #ifdef __cplusplus
 }
 #endif

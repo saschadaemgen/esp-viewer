@@ -30,8 +30,12 @@
 #include "ui_animations.h"
 #include "lucide_22.h"
 #include "lucide_88.h"
+#include "stream_pipeline.h"   /* S4-03: canvas attach/detach */
 
 #include "lvgl.h"
+#include "esp_log.h"
+
+static const char *TAG = "SCRRING";
 
 
 /*
@@ -405,48 +409,55 @@ void scr_ringing_set_accept_handler(lv_obj_t *overlay,
     lv_obj_add_flag(s_accept_btn, LV_OBJ_FLAG_CLICKABLE);
 }
 
-/* ---------- Fade-In / Fade-Out ---------- */
-
-static void overlay_opa_anim_cb(void *obj, int32_t v)
-{
-    lv_obj_set_style_opa((lv_obj_t *)obj, (lv_opa_t)v, 0);
-}
-
-static void overlay_fade_out_done_cb(lv_anim_t *a)
-{
-    lv_obj_t *target = (lv_obj_t *)lv_anim_get_user_data(a);
-    if (target) {
-        lv_obj_add_flag(target, LV_OBJ_FLAG_HIDDEN);
-    }
-}
+/* ---------- Show / Hide (instant, S4-03) ---------- *
+ *
+ * Vorher: 400ms opa-Fade auf s_overlay via style_opa-Anim + completion-
+ * Callback fuer HIDDEN-Flag. Hat in LVGL 9 nicht zuverlaessig cascadiert
+ * (refr nutzt style_opa_layered fuer Cascade-Skip, nicht style_opa) und
+ * die completion_cb feuerte unter Race-Bedingungen nicht - Cancel-
+ * Regression.
+ *
+ * Jetzt: synchroner HIDDEN-Toggle + explizit lv_obj_invalidate. Plus
+ * der Stream-Canvas wird beim Show ins Overlay reparented (zwischen
+ * backdrop und scrim) und beim Hide zurueck zum stream_view. Die
+ * Detach-Operation laeuft auf JEDEM Schliess-Pfad (cancel/reject/accept),
+ * weil alle ueber idle_mode_mgr_doorbell_end -> scr_ringing_hide gehen.
+ *
+ * Z-Order im Overlay nach Show:
+ *   index 0   backdrop  opak schwarz - Boden falls Stream aus ist
+ *   index 1   canvas    Live-Stream Vollbild (reparented)
+ *   index 2   scrim     0.35 schwarz - Lesbarkeits-Abdunklung
+ *   index 3   content   Bell + Text + 3 Action-Buttons
+ */
 
 void scr_ringing_show(void)
 {
     if (!s_overlay) return;
 
-    /* S4-01b: Overlay liegt jetzt auf lv_layer_top() - der Layer
-     * selbst ist immer ueber lv_screen_active(). Innerhalb des
-     * Top-Layers koennen mehrere Objekte existieren (z.B. ein
-     * spaeteres Toast-Overlay). move_foreground innerhalb des
-     * Top-Layers stellt sicher dass wir oben SIND, falls Geschwister
-     * vorhanden. */
+    ESP_LOGI(TAG, "show: instant + attach stream-canvas to overlay");
+
+    /* Stream-Canvas ins Overlay reparenten. Returnt den Canvas-Pointer
+     * (oder NULL falls Pipeline noch nicht laeuft). */
+    lv_obj_t *canvas = stream_pipeline_attach_to_overlay(s_overlay);
+
+    /* Z-Order: lv_obj_set_parent haengt canvas als LETZTES Kind an
+     * (also Index 3 nach backdrop/scrim/content). Wir wollen canvas
+     * aber direkt ueber dem backdrop (Index 1) damit scrim + content
+     * darueber liegen. */
+    if (canvas) {
+        lv_obj_move_to_index(canvas, 1);
+    }
+
+    /* Top-Layer-Foreground: defensiv, falls in Zukunft mehrere
+     * Top-Layer-Kinder existieren. */
     lv_obj_move_foreground(s_overlay);
 
-    /* Cancel any prior fade-out so they don't fight. */
-    lv_anim_delete(s_overlay, overlay_opa_anim_cb);
-
-    /* Unhide and ramp opacity from 0 to full over 400ms. */
+    /* Sichtbar machen + Region invalidieren damit LVGL die geaenderten
+     * Pixel definitiv re-rendert (sonst kann es passieren dass aus dem
+     * Stream-Modus heraus nichts ausserhalb der Canvas-Area neu gemalt
+     * wird - S4-03 Fehler 3). */
     lv_obj_clear_flag(s_overlay, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_set_style_opa(s_overlay, LV_OPA_TRANSP, 0);
-
-    lv_anim_t a;
-    lv_anim_init(&a);
-    lv_anim_set_var(&a, s_overlay);
-    lv_anim_set_values(&a, LV_OPA_TRANSP, LV_OPA_COVER);
-    lv_anim_set_duration(&a, 400);
-    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
-    lv_anim_set_exec_cb(&a, overlay_opa_anim_cb);
-    lv_anim_start(&a);
+    lv_obj_invalidate(s_overlay);
 }
 
 void scr_ringing_hide(void)
@@ -454,20 +465,17 @@ void scr_ringing_hide(void)
     if (!s_overlay) return;
     if (lv_obj_has_flag(s_overlay, LV_OBJ_FLAG_HIDDEN)) return;
 
-    /* S4-01b: Race-Resistanz. lv_anim_delete kann eine evtl. laufende
-     * Fade-In-Anim aus scr_ringing_show abbrechen. Wir setzen die
-     * Opacity nicht auf TRANSP zurueck, weil die Fade-Out-Anim sie
-     * von dem aktuellen Wert weiter herunterzieht (kein Sprung). */
-    lv_anim_delete(s_overlay, overlay_opa_anim_cb);
+    ESP_LOGI(TAG, "hide: detach stream-canvas + instant HIDDEN");
 
-    lv_anim_t a;
-    lv_anim_init(&a);
-    lv_anim_set_var(&a, s_overlay);
-    lv_anim_set_values(&a, LV_OPA_COVER, LV_OPA_TRANSP);
-    lv_anim_set_duration(&a, 400);
-    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
-    lv_anim_set_exec_cb(&a, overlay_opa_anim_cb);
-    lv_anim_set_user_data(&a, s_overlay);
-    lv_anim_set_completed_cb(&a, overlay_fade_out_done_cb);
-    lv_anim_start(&a);
+    /* WICHTIG: Detach BEVOR HIDDEN gesetzt wird. Sonst waere der Canvas
+     * fuer einen Tick Kind eines versteckten Containers und der Idle-
+     * Stream zwischendrin schwarz. */
+    stream_pipeline_detach_from_overlay();
+
+    lv_obj_add_flag(s_overlay, LV_OBJ_FLAG_HIDDEN);
+
+    /* Parent invalidieren damit das was unter dem Overlay liegt
+     * (idle_screen) sauber neu gerendert wird. */
+    lv_obj_t *parent = lv_obj_get_parent(s_overlay);
+    if (parent) lv_obj_invalidate(parent);
 }

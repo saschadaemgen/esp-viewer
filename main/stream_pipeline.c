@@ -403,3 +403,43 @@ void stream_pipeline_start(lv_obj_t *parent)
     s_canvas_parent = parent;
     xTaskCreatePinnedToCore(mjpeg_task, "mjpeg", 16384, NULL, 5, NULL, 0);
 }
+
+/* ============================================================
+ * S4-03: Canvas-Reparent fuer das Klingel-Overlay
+ *
+ * Single-Canvas-Architektur: der Stream rendert in genau EINEN
+ * lv_canvas (s_video_canvas). Waehrend der Klingel ziehen wir ihn
+ * temporaer in das Klingel-Overlay rein (Vollbild-Hintergrund), nach
+ * dem Klingel-Ende zurueck zu seinem Original-Parent (stream_view).
+ *
+ * Keine Buffer-Duplikate, keine Synchronisation - das gleiche Canvas-
+ * Objekt zeigt einfach an einer anderen Stelle im LVGL-Baum.
+ * ============================================================ */
+
+lv_obj_t *stream_pipeline_attach_to_overlay(lv_obj_t *new_parent)
+{
+    if (!new_parent) return NULL;
+    if (!s_video_canvas) return NULL;
+
+    if (!bsp_display_lock(100)) {
+        ESP_LOGW(TAG, "attach_to_overlay: display_lock timeout");
+        return NULL;
+    }
+    lv_obj_set_parent(s_video_canvas, new_parent);
+    bsp_display_unlock();
+
+    return s_video_canvas;
+}
+
+void stream_pipeline_detach_from_overlay(void)
+{
+    if (!s_video_canvas) return;
+    if (!s_canvas_parent) return;
+
+    if (!bsp_display_lock(100)) {
+        ESP_LOGW(TAG, "detach_from_overlay: display_lock timeout");
+        return;
+    }
+    lv_obj_set_parent(s_video_canvas, s_canvas_parent);
+    bsp_display_unlock();
+}
