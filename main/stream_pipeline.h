@@ -82,6 +82,17 @@ lv_obj_t *stream_pipeline_attach_to_overlay(lv_obj_t *new_parent);
  */
 void stream_pipeline_detach_from_overlay(void);
 
+/**
+ * Diagnose-Getter (S4-04): aktueller Parent des Stream-Canvas-Objekts
+ * oder NULL, falls noch kein Canvas existiert (Pipeline-Task noch nicht
+ * weit genug). Wird im Klingel-Show/Hide-Pfad geloggt, um zu verifizieren
+ * dass attach/detach das Reparenten tatsaechlich durchgefuehrt haben.
+ *
+ * Thread-Safety: nimmt intern bsp_display_lock(100). Bei lock-timeout
+ * wird NULL zurueckgegeben.
+ */
+lv_obj_t *stream_pipeline_get_canvas_parent(void);
+
 #ifdef __cplusplus
 }
 #endif

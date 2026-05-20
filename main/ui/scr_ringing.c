@@ -31,6 +31,7 @@
 #include "lucide_22.h"
 #include "lucide_88.h"
 #include "stream_pipeline.h"   /* S4-03: canvas attach/detach */
+#include "scr_idle.h"          /* S4-04 diag: scr_idle_is_screensaver_mode */
 
 #include "lvgl.h"
 #include "esp_log.h"
@@ -51,6 +52,9 @@ static lv_obj_t *s_reject_btn = NULL;
 static lv_obj_t *s_unlock_btn = NULL;
 static lv_obj_t *s_accept_btn = NULL;
 static lv_obj_t *s_sub_label  = NULL;
+/* S4-04 A3 diag: cache fuer Pulse-Kasten Ancestor-Walk */
+static lv_obj_t *s_diag_pulse_ring = NULL;
+static lv_obj_t *s_diag_bell_wrap  = NULL;
 
 
 /* ---------- Bell hero with pulse rings ---------- */
@@ -70,6 +74,7 @@ static void build_bell_hero(lv_obj_t *parent)
     lv_obj_set_style_border_width(wrap, 0, 0);
     lv_obj_clear_flag(wrap, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(wrap, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
+    s_diag_bell_wrap = wrap;
 
     /* 3 .bell-pulse rings (border-only circles, accent-soft border).
      * Skalieren via ui_anim_bell_pulse 0.6x -> 2.2x, phasenversetzt
@@ -87,6 +92,7 @@ static void build_bell_hero(lv_obj_t *parent)
         lv_obj_set_style_border_width(ring, 2, 0);
         lv_obj_clear_flag(ring, LV_OBJ_FLAG_SCROLLABLE);
         ui_anim_bell_pulse(ring, i * 800);
+        if (i == 0) s_diag_pulse_ring = ring; /* S4-04 diag */
     }
 
     /* .bell-hero: glassmorphic Kreis um die Bell. Web-CSS:
@@ -430,15 +436,63 @@ void scr_ringing_set_accept_handler(lv_obj_t *overlay,
  *   index 3   content   Bell + Text + 3 Action-Buttons
  */
 
+/* S4-04 A3 diag: walk Ancestor-Kette und log Geometrie + Flags die fuer
+ * Child-Clipping relevant sind. Gibt die Antwort auf "welcher Vorfahre
+ * schneidet meinen Pulse-Ring zum Kasten ab". TEMPORAER. */
+static void diag_log_geom_chain(lv_obj_t *obj, const char *who)
+{
+    if (!obj) {
+        ESP_LOGW(TAG, "[DIAG] geom_chain(%s): obj=NULL", who);
+        return;
+    }
+    ESP_LOGI(TAG, "[DIAG] geom_chain from %s:", who);
+    lv_obj_t *cur = obj;
+    int depth = 0;
+    while (cur && depth < 10) {
+        int32_t w = lv_obj_get_width(cur);
+        int32_t h = lv_obj_get_height(cur);
+        bool overflow_visible = lv_obj_has_flag(cur, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
+        bool scrollable = lv_obj_has_flag(cur, LV_OBJ_FLAG_SCROLLABLE);
+        bool hidden = lv_obj_has_flag(cur, LV_OBJ_FLAG_HIDDEN);
+        int32_t radius = lv_obj_get_style_radius(cur, 0);
+        int32_t pad_top = lv_obj_get_style_pad_top(cur, 0);
+        int32_t pad_left = lv_obj_get_style_pad_left(cur, 0);
+        ESP_LOGI(TAG, "[DIAG]   d=%d obj=%p size=%dx%d radius=%d pad_tl=%d/%d ovf_vis=%d scrl=%d hid=%d",
+                 depth, (void *)cur, (int)w, (int)h, (int)radius,
+                 (int)pad_top, (int)pad_left,
+                 overflow_visible, scrollable, hidden);
+        cur = lv_obj_get_parent(cur);
+        depth++;
+    }
+}
+
 void scr_ringing_show(void)
 {
-    if (!s_overlay) return;
+    /* S4-04 DIAG: TEMPORAERE Diagnose-Logs. Werden im naechsten Fix-
+     * Commit wieder entfernt sobald wir verstanden haben warum die
+     * Klingel aus dem Stream-Modus heraus nicht erscheint. */
+    bool was_screensaver = scr_idle_is_screensaver_mode();
+    ESP_LOGI(TAG, "[DIAG] RING_SHOW called, mode=%s s_overlay=%p",
+             was_screensaver ? "SCREENSAVER" : "STREAM", (void *)s_overlay);
 
-    ESP_LOGI(TAG, "show: instant + attach stream-canvas to overlay");
+    if (!s_overlay) {
+        ESP_LOGW(TAG, "[DIAG] RING_SHOW: s_overlay==NULL, returning");
+        return;
+    }
+
+    /* Parent-Pointer vergleichen */
+    lv_obj_t *current_parent = lv_obj_get_parent(s_overlay);
+    lv_obj_t *top_layer = lv_layer_top();
+    ESP_LOGI(TAG, "[DIAG] RING_SHOW: parent=%p top_layer=%p match=%d",
+             (void *)current_parent, (void *)top_layer,
+             current_parent == top_layer);
 
     /* Stream-Canvas ins Overlay reparenten. Returnt den Canvas-Pointer
      * (oder NULL falls Pipeline noch nicht laeuft). */
     lv_obj_t *canvas = stream_pipeline_attach_to_overlay(s_overlay);
+    lv_obj_t *canvas_parent_after_attach = stream_pipeline_get_canvas_parent();
+    ESP_LOGI(TAG, "[DIAG] RING_SHOW: attach_to_overlay returned canvas=%p, parent_now=%p (expected s_overlay=%p)",
+             (void *)canvas, (void *)canvas_parent_after_attach, (void *)s_overlay);
 
     /* Z-Order: lv_obj_set_parent haengt canvas als LETZTES Kind an
      * (also Index 3 nach backdrop/scrim/content). Wir wollen canvas
@@ -448,9 +502,15 @@ void scr_ringing_show(void)
         lv_obj_move_to_index(canvas, 1);
     }
 
+    /* Child-Index VOR move_foreground */
+    int32_t idx_pre = lv_obj_get_index(s_overlay);
     /* Top-Layer-Foreground: defensiv, falls in Zukunft mehrere
      * Top-Layer-Kinder existieren. */
     lv_obj_move_foreground(s_overlay);
+    int32_t idx_post = lv_obj_get_index(s_overlay);
+    int32_t toplayer_children = lv_obj_get_child_count(top_layer);
+    ESP_LOGI(TAG, "[DIAG] RING_SHOW: top_layer children=%d, overlay idx pre=%d post=%d",
+             (int)toplayer_children, (int)idx_pre, (int)idx_post);
 
     /* Sichtbar machen + Region invalidieren damit LVGL die geaenderten
      * Pixel definitiv re-rendert (sonst kann es passieren dass aus dem
@@ -458,21 +518,58 @@ void scr_ringing_show(void)
      * wird - S4-03 Fehler 3). */
     lv_obj_clear_flag(s_overlay, LV_OBJ_FLAG_HIDDEN);
     lv_obj_invalidate(s_overlay);
+
+    /* HIDDEN-State Overlay + Parent post-clear */
+    bool overlay_hidden = lv_obj_has_flag(s_overlay, LV_OBJ_FLAG_HIDDEN);
+    bool parent_hidden  = current_parent ?
+        lv_obj_has_flag(current_parent, LV_OBJ_FLAG_HIDDEN) : false;
+    ESP_LOGI(TAG, "[DIAG] RING_SHOW: post-clear hidden=%d parent_hidden=%d",
+             overlay_hidden, parent_hidden);
+
+    /* A3: Layout synchron neu rechnen, dann Pulse-Ring-Ancestor-Kette loggen.
+     * Sucht nach dem Vorfahren, der die Pulse-Animation auf einen Kasten
+     * zurueckschneidet (erwartet OVERFLOW_VISIBLE entlang der ganzen Kette
+     * bis lv_layer_top). */
+    lv_obj_update_layout(s_overlay);
+    diag_log_geom_chain(s_diag_pulse_ring, "pulse_ring[0]");
+    if (s_diag_bell_wrap) {
+        ESP_LOGI(TAG, "[DIAG] bell_wrap size=%dx%d (expected %dx%d)",
+                 (int)lv_obj_get_width(s_diag_bell_wrap),
+                 (int)lv_obj_get_height(s_diag_bell_wrap),
+                 UI_BELL_HERO_SIZE, UI_BELL_HERO_SIZE);
+    }
 }
 
 void scr_ringing_hide(void)
 {
-    if (!s_overlay) return;
-    if (lv_obj_has_flag(s_overlay, LV_OBJ_FLAG_HIDDEN)) return;
+    /* S4-04 DIAG: TEMPORAERE Diagnose-Logs. */
+    ESP_LOGI(TAG, "[DIAG] RING_HIDE called, s_overlay=%p", (void *)s_overlay);
 
-    ESP_LOGI(TAG, "hide: detach stream-canvas + instant HIDDEN");
+    if (!s_overlay) {
+        ESP_LOGW(TAG, "[DIAG] RING_HIDE: s_overlay==NULL, returning");
+        return;
+    }
+    if (lv_obj_has_flag(s_overlay, LV_OBJ_FLAG_HIDDEN)) {
+        ESP_LOGW(TAG, "[DIAG] RING_HIDE: already HIDDEN, returning");
+        return;
+    }
 
     /* WICHTIG: Detach BEVOR HIDDEN gesetzt wird. Sonst waere der Canvas
      * fuer einen Tick Kind eines versteckten Containers und der Idle-
      * Stream zwischendrin schwarz. */
     stream_pipeline_detach_from_overlay();
 
+    /* Diagnose: pruefe wo der Canvas jetzt liegt (= stream_view in
+     * scr_idle erwartet). Wenn der Parent nach detach NICHT der stream_view
+     * ist, hat das Reparenten nicht durchgegriffen und der Idle-Stream
+     * bleibt nach der Klingel schwarz. */
+    lv_obj_t *canvas_parent_after_detach = stream_pipeline_get_canvas_parent();
+    ESP_LOGI(TAG, "[DIAG] RING_HIDE: canvas parent after detach=%p",
+             (void *)canvas_parent_after_detach);
+
     lv_obj_add_flag(s_overlay, LV_OBJ_FLAG_HIDDEN);
+    bool hidden_post = lv_obj_has_flag(s_overlay, LV_OBJ_FLAG_HIDDEN);
+    ESP_LOGI(TAG, "[DIAG] RING_HIDE: HIDDEN-Flag-Set OK, has_flag=%d", hidden_post);
 
     /* Parent invalidieren damit das was unter dem Overlay liegt
      * (idle_screen) sauber neu gerendert wird. */

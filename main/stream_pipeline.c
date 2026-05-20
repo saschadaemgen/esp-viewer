@@ -443,3 +443,15 @@ void stream_pipeline_detach_from_overlay(void)
     lv_obj_set_parent(s_video_canvas, s_canvas_parent);
     bsp_display_unlock();
 }
+
+lv_obj_t *stream_pipeline_get_canvas_parent(void)
+{
+    if (!s_video_canvas) return NULL;
+    if (!bsp_display_lock(100)) {
+        ESP_LOGW(TAG, "get_canvas_parent: display_lock timeout");
+        return NULL;
+    }
+    lv_obj_t *p = lv_obj_get_parent(s_video_canvas);
+    bsp_display_unlock();
+    return p;
+}
