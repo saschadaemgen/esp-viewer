@@ -52,8 +52,10 @@ static lv_obj_t *s_reject_btn = NULL;
 static lv_obj_t *s_unlock_btn = NULL;
 static lv_obj_t *s_accept_btn = NULL;
 static lv_obj_t *s_sub_label  = NULL;
-/* S4-04 A3 diag: cache fuer Pulse-Kasten Ancestor-Walk */
-static lv_obj_t *s_diag_pulse_ring = NULL;
+/* S4-04 A3 diag: cache nur fuer den Bell-Wrap. Der eigentliche Pulse-Ring
+ * wird zur Walk-Zeit FRISCH per child-index aus dem Wrap geholt, damit
+ * ein stale Cache-Pointer (Overlay rebuild) den Walk nicht in einen
+ * gestorbenen Objekt-Heap fuehrt. S4-05 Crash-Fix. */
 static lv_obj_t *s_diag_bell_wrap  = NULL;
 
 
@@ -92,7 +94,6 @@ static void build_bell_hero(lv_obj_t *parent)
         lv_obj_set_style_border_width(ring, 2, 0);
         lv_obj_clear_flag(ring, LV_OBJ_FLAG_SCROLLABLE);
         ui_anim_bell_pulse(ring, i * 800);
-        if (i == 0) s_diag_pulse_ring = ring; /* S4-04 diag */
     }
 
     /* .bell-hero: glassmorphic Kreis um die Bell. Web-CSS:
@@ -438,17 +439,39 @@ void scr_ringing_set_accept_handler(lv_obj_t *overlay,
 
 /* S4-04 A3 diag: walk Ancestor-Kette und log Geometrie + Flags die fuer
  * Child-Clipping relevant sind. Gibt die Antwort auf "welcher Vorfahre
- * schneidet meinen Pulse-Ring zum Kasten ab". TEMPORAER. */
-static void diag_log_geom_chain(lv_obj_t *obj, const char *who)
+ * schneidet meinen Pulse-Ring zum Kasten ab".
+ *
+ * S4-05 Crash-Fix:
+ * - Pulse-Ring frisch per child-index aus dem cached Bell-Wrap holen,
+ *   nicht aus stale Cache-Pointer (vorherige Version hatte das Geraet
+ *   im Walk eingefroren).
+ * - NULL-Check vor jedem Dereferenzieren (Wrap, child[0], parent).
+ * - Schleifen-Obergrenze 8 Ebenen, danach hart abbrechen.
+ * - Explizite Abort-Log-Zeile bei jedem Fehlerpfad, damit man am
+ *   Geraet sieht warum nichts mehr kam.
+ *
+ * TEMPORAER, wird mit dem Fix-Commit entfernt. */
+static void diag_log_geom_chain(const char *who)
 {
-    if (!obj) {
-        ESP_LOGW(TAG, "[DIAG] geom_chain(%s): obj=NULL", who);
+    if (!s_diag_bell_wrap) {
+        ESP_LOGW(TAG, "[DIAG] geom_chain(%s): bell_wrap=NULL, abort", who);
         return;
     }
-    ESP_LOGI(TAG, "[DIAG] geom_chain from %s:", who);
+    uint32_t child_count = lv_obj_get_child_count(s_diag_bell_wrap);
+    if (child_count == 0) {
+        ESP_LOGW(TAG, "[DIAG] geom_chain(%s): bell_wrap has 0 children, abort", who);
+        return;
+    }
+    lv_obj_t *obj = lv_obj_get_child(s_diag_bell_wrap, 0);
+    if (!obj) {
+        ESP_LOGW(TAG, "[DIAG] geom_chain(%s): bell_wrap child[0]=NULL, abort", who);
+        return;
+    }
+
+    ESP_LOGI(TAG, "[DIAG] geom_chain from %s (wrap_children=%u):", who, (unsigned)child_count);
     lv_obj_t *cur = obj;
     int depth = 0;
-    while (cur && depth < 10) {
+    while (cur && depth < 8) {
         int32_t w = lv_obj_get_width(cur);
         int32_t h = lv_obj_get_height(cur);
         bool overflow_visible = lv_obj_has_flag(cur, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
@@ -461,8 +484,16 @@ static void diag_log_geom_chain(lv_obj_t *obj, const char *who)
                  depth, (void *)cur, (int)w, (int)h, (int)radius,
                  (int)pad_top, (int)pad_left,
                  overflow_visible, scrollable, hidden);
-        cur = lv_obj_get_parent(cur);
+        lv_obj_t *parent = lv_obj_get_parent(cur);
+        if (!parent) {
+            ESP_LOGI(TAG, "[DIAG]   d=%d parent=NULL (chain root reached)", depth);
+            break;
+        }
+        cur = parent;
         depth++;
+    }
+    if (depth >= 8) {
+        ESP_LOGW(TAG, "[DIAG] geom_chain(%s): hit depth cap 8, truncating", who);
     }
 }
 
@@ -529,15 +560,16 @@ void scr_ringing_show(void)
     /* A3: Layout synchron neu rechnen, dann Pulse-Ring-Ancestor-Kette loggen.
      * Sucht nach dem Vorfahren, der die Pulse-Animation auf einen Kasten
      * zurueckschneidet (erwartet OVERFLOW_VISIBLE entlang der ganzen Kette
-     * bis lv_layer_top). */
+     * bis lv_layer_top). S4-05: ring wird in diag_log_geom_chain frisch
+     * per child-index aus s_diag_bell_wrap geholt, kein stale Cache mehr. */
     lv_obj_update_layout(s_overlay);
-    diag_log_geom_chain(s_diag_pulse_ring, "pulse_ring[0]");
     if (s_diag_bell_wrap) {
         ESP_LOGI(TAG, "[DIAG] bell_wrap size=%dx%d (expected %dx%d)",
                  (int)lv_obj_get_width(s_diag_bell_wrap),
                  (int)lv_obj_get_height(s_diag_bell_wrap),
                  UI_BELL_HERO_SIZE, UI_BELL_HERO_SIZE);
     }
+    diag_log_geom_chain("pulse_ring[0]");
 }
 
 void scr_ringing_hide(void)

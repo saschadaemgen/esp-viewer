@@ -291,8 +291,21 @@ void idle_mode_mgr_doorbell_start(void)
      *   4. scr_ringing_show macht den 400ms-Fade-In.
      *
      * Settings auto-schliessen wird NICHT restored - der User wurde
-     * mit Klingel unterbrochen, Settings re-oeffnen ist nur ein Tap. */
-    if (bsp_display_lock(50)) {
+     * mit Klingel unterbrochen, Settings re-oeffnen ist nur ein Tap.
+     *
+     * S4-05: Timeout 50ms war zu knapp. Im Stream-Modus ist der LVGL-
+     * Refresh-Task durch den 9-FPS-Canvas-Invalidate gut beschaeftigt,
+     * dazu nimmt der mjpeg_task selbst regelmaessig den Display-Lock fuer
+     * lv_obj_invalidate. Der SSE/Worker-Task hatte unter dieser Last in
+     * 50ms keine Chance auf den Lock -> ganzer Block (inkl. saved-view-
+     * mode-Log UND scr_ringing_show) wurde uebersprungen. Symptom: Klingel
+     * aus Stream-Modus zeigte NIE das Overlay. Im Bildschirmschoner ist
+     * der Canvas hidden, kaum Render-Druck, 50ms reichten dort.
+     *
+     * 2000ms ist generous: bei normalem Betrieb dauert ein Frame-Render
+     * <50ms, der Lock ist also fast immer schnell zu kriegen. Bei
+     * Pathologie loggen wir's und fallen trotzdem nicht ganz aus. */
+    if (bsp_display_lock(2000)) {
         lv_anim_delete(NULL, fade_anim_exec);
         lv_display_trigger_activity(NULL);
 
@@ -307,6 +320,8 @@ void idle_mode_mgr_doorbell_start(void)
         scr_ringing_show();
 
         bsp_display_unlock();
+    } else {
+        ESP_LOGE(TAG, "Doorbell start: display_lock(2000ms) TIMEOUT - overlay not shown!");
     }
     apply_backlight(WAKE_HARD_BRIGHTNESS);
 }
@@ -329,7 +344,12 @@ void idle_mode_mgr_doorbell_end(void)
              target,
              s_doorbell_saved_was_screensaver ? "SCREENSAVER" : "STREAM");
 
-    if (bsp_display_lock(50)) {
+    /* S4-05: gleicher Lock-Timeout-Fix wie in doorbell_start. Nach dem
+     * Klingel-Ende ist der Stream-Canvas ggf. noch im Overlay (oder
+     * wird gerade zurueckgereparented), der Refresh-Task ist busy.
+     * 50ms reichten unter Last nicht -> scr_ringing_hide wurde nie
+     * aufgerufen, Overlay haengt sichtbar. */
+    if (bsp_display_lock(2000)) {
         scr_ringing_hide();  /* instant hide + canvas detach (S4-03) */
 
         /* S4-01: Modus restoren. Wenn der User vor der Klingel im
@@ -345,6 +365,8 @@ void idle_mode_mgr_doorbell_end(void)
 
         start_fade(s_current_brightness, target);
         bsp_display_unlock();
+    } else {
+        ESP_LOGE(TAG, "Doorbell end: display_lock(2000ms) TIMEOUT - overlay may persist!");
     }
 }
 
