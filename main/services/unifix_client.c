@@ -499,6 +499,12 @@ esp_err_t unifix_client_get_weather(unifix_weather_t *out)
         return ESP_ERR_INVALID_RESPONSE;
     }
 
+    /* TEMP DEBUG S03-10: rohen Response loggen zur Diagnose.
+     * Server liefert condition_text + icon_code leer - wir muessen
+     * sehen ob das schon im Wire-Format leer ist oder ob unser
+     * Parser die Felder verfehlt. Entfernen sobald geklaert. */
+    ESP_LOGI(TAG, "get_weather RAW response: %s", s_response_buf);
+
     /* Parse JSON response */
     cJSON *root = cJSON_Parse(s_response_buf);
     if (!root) {
