@@ -96,16 +96,22 @@ bool time_sync_is_synced(void);
 void time_sync_format_time(char *buf, size_t buflen, language_t lang);
 
 /**
- * Schreibt die aktuelle Uhrzeit als "HH:MM:SS" in den Buffer.
- * 24h-Format, MIT Sekunden.
+ * Schreibt die aktuelle Uhrzeit MIT Sekunden in den Buffer.
  *
- * Verwendet von der Topbar (kleine Uhr oben rechts).
+ * Format ist locale-abhaengig (S03-11):
+ *   LANG_DE: "HH:MM:SS"           24h-Format, z.B. "22:47:03"
+ *   LANG_EN: "H:MM:SS AM/PM"      US-12h-Format, z.B. "10:47:03 PM"
+ *
+ * Verwendet von der Topbar (kleine Uhr oben rechts). Die Pixel-
+ * Bildschirmschoner-Uhr (time_sync_format_time, ohne Sekunden)
+ * bleibt in beiden Sprachen 24h - bewusste Designentscheidung.
  *
  * Falls noch nicht synced: schreibt "--:--:--".
  *
  * @param buf     Output-Buffer
- * @param buflen  Buffer-Groesse (min. 9 Bytes)
- * @param lang    Sprache - heute nur fuers Format-Symbol relevant.
+ * @param buflen  Buffer-Groesse (min. 12 Bytes fuer "12:47:03 AM"
+ *                + NUL bei LANG_EN, 9 Bytes bei LANG_DE).
+ * @param lang    Sprache
  */
 void time_sync_format_time_long(char *buf, size_t buflen, language_t lang);
 

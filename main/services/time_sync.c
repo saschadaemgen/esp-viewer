@@ -153,8 +153,6 @@ void time_sync_format_time(char *buf, size_t buflen, language_t lang)
 
 void time_sync_format_time_long(char *buf, size_t buflen, language_t lang)
 {
-    (void)lang;  /* time format is locale-neutral */
-
     if (!buf || buflen == 0) return;
 
     if (!s_synced) {
@@ -166,8 +164,22 @@ void time_sync_format_time_long(char *buf, size_t buflen, language_t lang)
     struct tm tm_local;
     localtime_r(&now, &tm_local);
 
-    snprintf(buf, buflen, "%02d:%02d:%02d",
-             tm_local.tm_hour, tm_local.tm_min, tm_local.tm_sec);
+    if (lang == LANG_EN) {
+        /* US-Stil 12-Stunden mit AM/PM (S03-11):
+         *   00:xx -> 12:xx AM
+         *   01:xx -> 1:xx AM    ...    11:xx -> 11:xx AM
+         *   12:xx -> 12:xx PM
+         *   13:xx -> 1:xx PM    ...    23:xx -> 11:xx PM */
+        int hour12 = tm_local.tm_hour % 12;
+        if (hour12 == 0) hour12 = 12;
+        const char *ampm = (tm_local.tm_hour < 12) ? "AM" : "PM";
+        snprintf(buf, buflen, "%d:%02d:%02d %s",
+                 hour12, tm_local.tm_min, tm_local.tm_sec, ampm);
+    } else {
+        /* Deutsch und alle anderen: 24-Stunden ohne Suffix. */
+        snprintf(buf, buflen, "%02d:%02d:%02d",
+                 tm_local.tm_hour, tm_local.tm_min, tm_local.tm_sec);
+    }
 }
 
 void time_sync_format_date(char *buf, size_t buflen, language_t lang)
