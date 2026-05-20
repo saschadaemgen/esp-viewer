@@ -91,6 +91,11 @@ static const char *TAG = "KOENIG";
 #define UNIFIX_WORKER_PRIO        5
 #define UNIFIX_WORKER_CORE        1
 
+/* S03-10 Wetter-Polling: 15 Minuten zwischen GETs gegen /esp/weather.
+ * Server cached den OpenWeather-Response selbst 15min, also kostet
+ * ein haeufigeres Polling nur ESP-Strom ohne neuere Daten. */
+#define WEATHER_POLL_INTERVAL_MS  (15 * 60 * 1000)
+
 static int s_retry = 0;
 static lv_obj_t *s_ringing_overlay = NULL;
 static lv_obj_t *s_idle_screen     = NULL;
@@ -123,6 +128,7 @@ typedef enum {
     UNIFIX_ACTION_UNLOCK,
     UNIFIX_ACTION_CONFIG_FETCH,   /* GET /esp/config (boot + config.changed) */
     UNIFIX_ACTION_SETTINGS_SAVE,  /* POST /esp/settings - stubbed until S14-04 */
+    UNIFIX_ACTION_WEATHER_FETCH,  /* GET /esp/weather (S03-10: 15min poll) */
     /* UNIFIX_ACTION_ANSWER -> spaeter mit Audio */
 } unifix_action_t;
 
@@ -188,6 +194,26 @@ static void unifix_action_worker(void *arg)
                          esp_err_to_name(ss_err));
                 /* No retry today. Next config.changed-Echo will heal
                  * the UI if user had only desync'd locally. */
+            }
+            break;
+        }
+        case UNIFIX_ACTION_WEATHER_FETCH: {
+            unifix_weather_t w = {0};
+            esp_err_t w_err = unifix_client_get_weather(&w);
+            if (w_err == ESP_OK) {
+                ESP_LOGI(TAG, "Worker: WEATHER %d C, '%s', icon='%s'",
+                         w.temp_c, w.condition_text, w.icon_code);
+                if (bsp_display_lock(200)) {
+                    scr_screensaver_set_weather(w.temp_c,
+                                                 w.condition_text,
+                                                 w.icon_code);
+                    bsp_display_unlock();
+                } else {
+                    ESP_LOGW(TAG, "Worker: WEATHER display_lock timeout");
+                }
+            } else {
+                ESP_LOGW(TAG, "Worker: WEATHER fetch failed: %s",
+                         esp_err_to_name(w_err));
             }
             break;
         }
@@ -452,6 +478,17 @@ static void on_config_changed(const unifix_config_t *cfg)
     scr_screensaver_set_clock_layout(cfg->clock_layout);
 
     bsp_display_unlock();
+
+    /* S03-10: Wetter neu holen - config.changed kann Standort-Wechsel
+     * bedeuten (anderer Mieter, andere Stadt). Server-Cache 15min
+     * bleibt unangetastet, der Call holt aber den NEUEN-Standort-
+     * Eintrag falls vorhanden. Im Worker, weil HTTP. */
+    if (s_unifix_action_queue) {
+        unifix_request_t wreq = { .action = UNIFIX_ACTION_WEATHER_FETCH };
+        if (xQueueSend(s_unifix_action_queue, &wreq, 0) != pdTRUE) {
+            ESP_LOGW(TAG, "on_config_changed: weather queue full");
+        }
+    }
 }
 
 
@@ -556,6 +593,28 @@ static void topbar_clock_tick(lv_timer_t *t)
         scr_idle_set_clock_time(tbuf);
         scr_idle_set_clock_date(dbuf);
         bsp_display_unlock();
+    }
+}
+
+
+/* ============================================================
+ * Wetter-Polling-Tick (S03-10)
+ *
+ * 15-Minuten-LVGL-Timer der den Worker anstoesst, ein /esp/weather
+ * GET zu machen. Der eigentliche HTTP-Call laeuft im Worker-Task,
+ * nicht im LVGL-Task. Initial-Fetch passiert direkt im on_got_ip
+ * direkt nach Worker-Setup.
+ *
+ * Server cached den OpenWeather-Response selber 15min, also gibt's
+ * nichts gewonnen durch oefteres Polling.
+ * ============================================================ */
+static void weather_poll_tick(lv_timer_t *t)
+{
+    (void)t;
+    if (!s_unifix_action_queue) return;
+    unifix_request_t req = { .action = UNIFIX_ACTION_WEATHER_FETCH };
+    if (xQueueSend(s_unifix_action_queue, &req, 0) != pdTRUE) {
+        ESP_LOGW(TAG, "weather_poll_tick: action queue full, skip");
     }
 }
 
@@ -768,6 +827,18 @@ static void on_got_ip(void)
              * server values on top of whatever the cache had. */
             unifix_request_t fetch_req = { .action = UNIFIX_ACTION_CONFIG_FETCH };
             xQueueSend(s_unifix_action_queue, &fetch_req, 0);
+
+            /* S03-10: Wetter-Boot-Fetch (sofort) + 15min-Polling-Timer.
+             * Der Polling-Timer laeuft im LVGL-Task-Context und enqueued
+             * nur die Action; der HTTP-Call passiert im Worker. */
+            unifix_request_t weather_req = { .action = UNIFIX_ACTION_WEATHER_FETCH };
+            xQueueSend(s_unifix_action_queue, &weather_req, 0);
+
+            if (bsp_display_lock(100)) {
+                lv_timer_create(weather_poll_tick,
+                                 WEATHER_POLL_INTERVAL_MS, NULL);
+                bsp_display_unlock();
+            }
         }
 
         ESP_LOGI(TAG, "Starting SSE-Listener for /esp/events ...");
