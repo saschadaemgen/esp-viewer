@@ -127,6 +127,16 @@ void scr_idle_show_screensaver_mode(void);
 void scr_idle_toggle_idle_mode(void);
 
 /**
+ * @return true  wenn aktuell der Bildschirmschoner-View sichtbar ist
+ * @return false wenn Stream-View sichtbar ist
+ *
+ * Verwendet vom idle_mode_mgr_doorbell_start um den vorherigen Modus
+ * zu merken (S4-01). Settings-Overlay zaehlt nicht in dieser Abfrage -
+ * Settings ist ein separater Overlay-State.
+ */
+bool scr_idle_is_screensaver_mode(void);
+
+/**
  * Animates from stream-mode to settings-mode (slide-up, 400ms overshoot).
  * Idempotent: no-op if settings is already shown.
  * No-op if scr_idle_register_settings_view was not called yet.

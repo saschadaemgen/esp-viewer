@@ -65,6 +65,11 @@ static backlight_reason_t s_reason = BACKLIGHT_REASON_IDLE;
 static bool s_screen_is_off = false;
 static int64_t s_last_activity_us = 0;
 
+/* S4-01: Vor doorbell_start gemerkter Bildschirmschoner-State.
+ * Beim doorbell_end wieder hergestellt, damit der User nach dem
+ * Auflegen wieder im Modus landet in dem er war. */
+static bool s_doorbell_saved_was_screensaver = false;
+
 /* ---------------- Helpers ---------------- */
 
 static int64_t now_us(void)
@@ -275,16 +280,28 @@ void idle_mode_mgr_doorbell_start(void)
     /* Hart 100% ohne Fade. apply_backlight ist BSP-direct,
      * darf von jedem Task aufgerufen werden. Bevorzugt brechen wir
      * eine laufende Fade-Animation ab, damit sie nicht ueber unser
-     * Hard-Set drueber malt. Plus visuelle Orchestrierung:
-     * Settings auto-schliessen + Mode-Switch zu Stream damit der
-     * User den Kamera-Feed durch das halbtransparente Overlay sieht.
-     * scr_ringing_show macht den 400ms-Fade-In. */
+     * Hard-Set drueber malt.
+     *
+     * S4-01: visuelle Orchestrierung mit Mode-Snapshot.
+     *   1. Bildschirmschoner-State merken (wir wollen ihn nach dem
+     *      Auflegen restoren).
+     *   2. Settings auto-schliessen falls offen.
+     *   3. Stream-Mode forcieren damit der User die Kamera durch den
+     *      35%-Scrim sieht (nicht Screensaver mit Uhr/Wetter).
+     *   4. scr_ringing_show macht den 400ms-Fade-In.
+     *
+     * Settings auto-schliessen wird NICHT restored - der User wurde
+     * mit Klingel unterbrochen, Settings re-oeffnen ist nur ein Tap. */
     if (bsp_display_lock(50)) {
         lv_anim_delete(NULL, fade_anim_exec);
         lv_display_trigger_activity(NULL);
 
+        s_doorbell_saved_was_screensaver = scr_idle_is_screensaver_mode();
+        ESP_LOGI(TAG, "Doorbell start -> saved view-mode: %s",
+                 s_doorbell_saved_was_screensaver ? "SCREENSAVER" : "STREAM");
+
         if (scr_idle_is_settings_shown()) {
-            scr_idle_show_stream();  /* slide settings down */
+            scr_idle_show_stream();  /* instant hide */
         }
         scr_idle_show_stream_mode();  /* idempotent */
         scr_ringing_show();
@@ -308,10 +325,24 @@ void idle_mode_mgr_doorbell_end(void)
     target = s_brightness_idle;
     xSemaphoreGive(s_mutex);
 
-    ESP_LOGI(TAG, "Doorbell end -> backlight %d%% (fade)", target);
+    ESP_LOGI(TAG, "Doorbell end -> backlight %d%% (fade), restore=%s",
+             target,
+             s_doorbell_saved_was_screensaver ? "SCREENSAVER" : "STREAM");
 
     if (bsp_display_lock(50)) {
         scr_ringing_hide();  /* 400ms fade-out */
+
+        /* S4-01: Modus restoren. Wenn der User vor der Klingel im
+         * Bildschirmschoner war, kehrt er dahin zurueck. Backlight
+         * laeuft eh ueber den 500ms-Poll-Timer der bei SCREEN_OFF-
+         * idle-mode + abgelaufenem Timeout wieder ausblendet. */
+        if (s_doorbell_saved_was_screensaver) {
+            scr_idle_show_screensaver_mode();
+        }
+        /* Wenn vor dem Anruf STREAM war, ist scr_idle bereits in STREAM
+         * (haben wir bei doorbell_start umgeschaltet). Kein Re-Switch
+         * noetig. */
+
         start_fade(s_current_brightness, target);
         bsp_display_unlock();
     }

@@ -263,14 +263,14 @@ extern "C" {
  *   stream_h = SCREEN_H - 2*PAD - TOPBAR_H - 2*GAP - ACTIONS_H
  *            = 1280 - 28 - 64 - 20 - 96 = 1072 */
 
-/* Bell-Hero (Ringing-Screen) - vergroessert auf ~2.1x Web-Desktop
- * (800x1280 Hochformat-Display erlaubt grossere Hero-Praesenz).
- * Pulse-Rings expandieren auf 2.2x = 748px -> passt innerhalb 800. */
-#define UI_BELL_HERO_SIZE         340
+/* Bell-Hero (Ringing-Screen) - 132 Web-Mobile * 2.1 ~= 277 (S4-01).
+ * Pulse-Rings expandieren auf 2.2x; OVERFLOW_VISIBLE-Flag am Wrap
+ * verhindert dass sie an der Wrap-Grenze abgeschnitten werden. */
+#define UI_BELL_HERO_SIZE         277
 #define UI_BELL_HERO_ICON         88     /* Lucide-88 Font-Groesse */
 
-/* Ring-Buttons (Ignorieren/Tuer/Annehmen) - ~2.1x Web-Desktop. */
-#define UI_RING_BTN_SIZE          152
+/* Ring-Buttons (Ignorieren/Tuer/Annehmen) - 68 Web-Mobile * 2.1 ~= 143 (S4-01). */
+#define UI_RING_BTN_SIZE          143
 #define UI_RING_BTN_ICON          64
 
 /* Action-Buttons (Idle bottom bar) */

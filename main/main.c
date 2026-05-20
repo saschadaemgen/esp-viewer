@@ -315,6 +315,26 @@ static void on_unlock_click(lv_event_t *e)
 
 
 /* ============================================================
+ * Accept button click handler (S4-01)
+ *
+ * "Annehmen" beendet den Ringing-Screen und blendet zurueck auf den
+ * vorher gemerkten Modus. Two-Way-Audio + tatsaechliche
+ * Anruf-Annahme via POST /esp/accept kommt erst in Saison 5+, daher
+ * heute kein Server-Call - nur visueller State-Wechsel.
+ * ============================================================ */
+static void on_accept_click(lv_event_t *e)
+{
+    (void)e;
+    ESP_LOGI(TAG, "Accept button pressed - audio handshake in S5+, "
+             "closing overlay");
+
+    /* Doorbell-Pipeline beenden: Overlay fade-out + Backlight zurueck +
+     * Mode-Restore (idle_mode_mgr_doorbell_end). */
+    idle_mode_mgr_doorbell_end();
+}
+
+
+/* ============================================================
  * Settings: brightness live-preview callback
  *
  * Called on every slider value-change. Pipes the new percent into
@@ -839,6 +859,9 @@ static void on_got_ip(void)
         /* Wire the ringing overlay button click handlers */
         scr_ringing_set_reject_handler(s_ringing_overlay, on_reject_click, NULL);
         scr_ringing_set_unlock_handler(s_ringing_overlay, on_unlock_click, NULL);
+        /* S4-01: Annehmen-Button visuell aktiv + Close-on-Tap. Echte
+         * Anruf-Annahme (POST /esp/accept) kommt mit Two-Way-Audio S5+. */
+        scr_ringing_set_accept_handler(s_ringing_overlay, on_accept_click, NULL);
 
         bsp_display_unlock();
         ESP_LOGI(TAG, "Idle + ringing + settings built (overlay=%p)",

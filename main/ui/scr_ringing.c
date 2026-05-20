@@ -52,15 +52,24 @@ static lv_obj_t *s_sub_label  = NULL;
 /* ---------- Bell hero with pulse rings ---------- */
 static void build_bell_hero(lv_obj_t *parent)
 {
-    /* .bell-hero-wrap: 160x160 relative container */
+    /* .bell-hero-wrap: Container fuer Bell + 3 Pulse-Rings.
+     *
+     * S4-01-Fix: Pulse-Rings skalieren auf 2.2x (UI_BELL_HERO_SIZE * 2.2
+     * ~= 610px) waehrend der Animation. Bei default-LVGL-Clipping wuerde
+     * der Wrap die Rings an seiner 277px-Grenze abschneiden -> sichtbarer
+     * "Kasten" um die Pulse-Welle. LV_OBJ_FLAG_OVERFLOW_VISIBLE schaltet
+     * das Child-Clipping ab, die Rings duerfen jetzt nach aussen atmen. */
     lv_obj_t *wrap = lv_obj_create(parent);
     lv_obj_remove_style_all(wrap);
     lv_obj_set_size(wrap, UI_BELL_HERO_SIZE, UI_BELL_HERO_SIZE);
     lv_obj_set_style_bg_opa(wrap, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(wrap, 0, 0);
     lv_obj_clear_flag(wrap, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(wrap, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
 
-    /* 3 .bell-pulse rings (border-only circles, accent-soft border) */
+    /* 3 .bell-pulse rings (border-only circles, accent-soft border).
+     * Skalieren via ui_anim_bell_pulse 0.6x -> 2.2x, phasenversetzt
+     * je 800ms. Dank OVERFLOW_VISIBLE am Wrap nicht abgeschnitten. */
     for (int i = 0; i < 3; i++) {
         lv_obj_t *ring = lv_obj_create(wrap);
         lv_obj_remove_style_all(ring);
@@ -76,22 +85,20 @@ static void build_bell_hero(lv_obj_t *parent)
         ui_anim_bell_pulse(ring, i * 800);
     }
 
-    /* .bell-hero: solid circle with gradient, hairline border, glow,
-     * wobble animation */
+    /* .bell-hero: glassmorphic Kreis um die Bell. Web-CSS:
+     *   bg     rgba(255,255,255,0.08)   ~ 20/255 weiss-opa
+     *   border 1px rgba(255,255,255,0.18) ~ 46/255 weiss-opa
+     *   shadow 0 0 50px accent-glow + 0 0 100px accent-soft */
     lv_obj_t *hero = lv_obj_create(wrap);
     lv_obj_remove_style_all(hero);
     lv_obj_set_size(hero, UI_BELL_HERO_SIZE, UI_BELL_HERO_SIZE);
     lv_obj_center(hero);
     lv_obj_set_style_radius(hero, UI_RADIUS_FULL, 0);
-    /* CSS: linear-gradient(180deg, rgba(255,255,255,0.14), rgba(255,255,255,0.03)) */
     lv_obj_set_style_bg_color(hero, UI_COLOR_TEXT, 0);
-    lv_obj_set_style_bg_opa(hero, 35, 0);  /* 0.14 */
-    lv_obj_set_style_bg_grad_color(hero, UI_COLOR_TEXT, 0);
-    lv_obj_set_style_bg_grad_dir(hero, LV_GRAD_DIR_VER, 0);
+    lv_obj_set_style_bg_opa(hero, 20, 0);   /* 0.08 */
     lv_obj_set_style_border_color(hero, UI_COLOR_TEXT, 0);
-    lv_obj_set_style_border_opa(hero, 25, 0);  /* 0.10 */
+    lv_obj_set_style_border_opa(hero, 46, 0);  /* 0.18 */
     lv_obj_set_style_border_width(hero, 1, 0);
-    /* CSS: 0 0 50px accent-glow + 0 0 100px accent-soft */
     lv_obj_set_style_shadow_color(hero, UI_COLOR_ACCENT, 0);
     lv_obj_set_style_shadow_width(hero, 80, 0);
     lv_obj_set_style_shadow_opa(hero, UI_OPA_ACCENT_GLOW, 0);
@@ -157,8 +164,8 @@ static lv_obj_t *build_ring_btn(lv_obj_t *parent, const char *symbol,
     }
 
     /* Icon - Lucide font glyph at ~50px (lucide_22 base scaled 2.27x).
-     * Buttons sind 152x152 (UI_RING_BTN_SIZE) - Icon-Target ~50px.
-     * lucide_88 hat nur ICON_BELL als Glyphe, nicht X/door/phone, deshalb
+     * Buttons sind UI_RING_BTN_SIZE x UI_RING_BTN_SIZE (143 nach S4-01).
+     * lucide_88 hat nur ICON_BELL als Glyphe, nicht X/lock/phone, deshalb
      * skalieren wir lucide_22 hoch. Etwas weicher als ein nativer 50px-
      * Font, aber kein zweites Font-Asset noetig. */
     lv_obj_t *icon = lv_label_create(btn);
@@ -211,16 +218,21 @@ static lv_obj_t *build_ring_col(lv_obj_t *parent, const char *symbol,
 /* ---------- Top-level build ---------- */
 lv_obj_t *scr_ringing_build(lv_obj_t *parent, const scr_ringing_data_t *data)
 {
-    /* .ringing: absolute inset 0. Web nutzt #000 + Stream-Embed mit
-     * opacity 0.45. ESP-Aequivalent: halbtransparent (70% schwarz)
-     * damit der Stream-View darunter durchscheint. Dunkel genug
-     * fuer Kontrast der Bell + Buttons. */
+    /* .ringing: dominanter Vollbild-Screen ueber Stream (S4-01).
+     *
+     * Master-Chat-Spec: Anrufer-Kamera Vollbild + Scrim rgba(0,0,0,0.35).
+     * Auf ESP heisst das: schwarzer Background mit 35% Opacity ueber
+     * dem stream_view, der weiter aktiv ist und die Kamera zeigt.
+     * Vorher waren es 70% (zu dunkel), die alte "0.45 stream-dim"-
+     * Logik des Web-Viewers gibt es bei uns nicht.
+     *
+     * 0.35 als LVGL-Wert: 0.35 * 255 = 89. */
     lv_obj_t *overlay = lv_obj_create(parent);
     lv_obj_remove_style_all(overlay);
     lv_obj_set_size(overlay, lv_pct(100), lv_pct(100));
     lv_obj_align(overlay, LV_ALIGN_TOP_LEFT, 0, 0);
     lv_obj_set_style_bg_color(overlay, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_bg_opa(overlay, LV_OPA_70, 0);  /* ~178/255, Stream scheint durch */
+    lv_obj_set_style_bg_opa(overlay, 89, 0);  /* 0.35 scrim */
     lv_obj_set_style_border_width(overlay, 0, 0);
     /* CSS padding: 90px 24px 56px - top large, sides 24, bottom 56 */
     lv_obj_set_style_pad_top(overlay, 90, 0);
@@ -282,11 +294,17 @@ lv_obj_t *scr_ringing_build(lv_obj_t *parent, const scr_ringing_data_t *data)
     lv_obj_clear_flag(actions, LV_OBJ_FLAG_SCROLLABLE);
 
     /* 3 columns: Ignorieren / Tür auf / Annehmen.
-     * Reject/unlock/accept buttons sind gecacht fuer handler setters.
-     * Annehmen ist visuell aktiv (glow + full opacity), handler bleibt
-     * optional (kein POST bis Two-Way-Audio in S5+). */
+     * S4-01: Briefing nennt bell-off / key / phone. bell-off und key sind
+     * nicht in unserer aktuellen lucide_22-Font drin (Sasch regeneriert
+     * die Font separat, hier nicht touchen).
+     *   - Ignorieren: ICON_X (Kreuz) - vergleichbarer Reject-Marker
+     *   - Tuer auf:   ICON_LOCK_OPEN (lock-with-key-shape, semantisch
+     *                 naeher am Briefing's "key" als ICON_DOOR_OPEN
+     *                 und konsistent mit dem Idle-Action-Bar-Button)
+     *   - Annehmen:   ICON_PHONE - matched die Briefing-Spec
+     * Alle drei Buttons sind ab S4-01 funktional (kein 'disabled'). */
     s_reject_btn = build_ring_col(actions, ICON_X,         RING_DANGER, false, "Ignorieren");
-    s_unlock_btn = build_ring_col(actions, ICON_DOOR_OPEN, RING_WARN,   false, "Tür auf");
+    s_unlock_btn = build_ring_col(actions, ICON_LOCK_OPEN, RING_WARN,   false, "Tür auf");
     s_accept_btn = build_ring_col(actions, ICON_PHONE,     RING_OK,     false, "Annehmen");
 
     return overlay;

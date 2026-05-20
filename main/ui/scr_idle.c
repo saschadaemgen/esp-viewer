@@ -633,6 +633,11 @@ void scr_idle_toggle_idle_mode(void)
     }
 }
 
+bool scr_idle_is_screensaver_mode(void)
+{
+    return s_refs.current_mode == SCR_IDLE_MODE_SCREENSAVER;
+}
+
 void scr_idle_show_settings(void)
 {
     if (!s_refs.settings_view || !s_refs.stream_view) return;
