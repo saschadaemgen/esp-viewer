@@ -218,54 +218,40 @@ static lv_obj_t *build_ring_col(lv_obj_t *parent, const char *symbol,
 /* ---------- Top-level build ---------- */
 lv_obj_t *scr_ringing_build(lv_obj_t *parent, const scr_ringing_data_t *data)
 {
-    /* .ringing: dominanter Vollbild-Screen auf dem LVGL-Top-Layer
-     * (S4-01b - Korrektur zu S4-01).
+    /* .ringing: Vollbild-Overlay auf dem LVGL-Top-Layer (S4-02b).
      *
      * Architektur:
-     *   parent (lv_layer_top()) - liegt ueber ALLEN normalen Screens
-     *     overlay (transparent, OVERFLOW_VISIBLE fuer Pulse-Rings)
-     *       backdrop  Vollbild schwarz opak (Camera-Placeholder)
-     *       scrim     Vollbild schwarz 35% (Master-Chat-Scrim)
-     *       content   Bell-Hero + Text + Action-Buttons
+     *   parent (lv_layer_top()) - ueber allen Screens
+     *     overlay (transparent, pad_all=0, OVERFLOW_VISIBLE)
+     *       backdrop  full-bleed 800x1280 schwarz opak (Camera-Placeholder)
+     *       scrim     full-bleed 800x1280 schwarz 35%
+     *       content   full-bleed Frame mit 90/24/24/56 Padding +
+     *                 flex column fuer Bell-Hero / Text / Spacer / Actions
      *
-     * Warum so:
-     * - Vorher war das Overlay Kind des idle_screen + nur per
-     *   move_foreground gehoben. Bildschirmschoner als Geschwister
-     *   blieb sichtbar (Scrim 35% deckt nicht ab), Pulse-Clip vom
-     *   idle-Vorfahr, Restore-Race bei Cancel - alles in einer
-     *   Wurzel.
-     * - lv_layer_top() ist garantiert ueber lv_screen_active(),
-     *   damit ist die z-Order entkoppelt vom Idle-Screen.
-     * - Eine OPAKE schwarze Schicht UNTER dem Scrim ist der Camera-
-     *   Placeholder: damit scheint im Klingelzustand NICHTS vom
-     *   vorigen Screen durch. Wenn der Anrufer-Stream spaeter in
-     *   diesen Klingel-Screen embeddet wird (S5+), ersetzt er die
-     *   schwarze Schicht, Scrim bleibt unangetastet. */
+     * Warum content separat:
+     * - In S4-01b lagen Padding-Werte (90/24/24/56) direkt am overlay.
+     *   Damit wurden backdrop/scrim per lv_pct(100) auf die overlay-
+     *   Content-Area gerechnet (752x1134 statt 800x1280). Das ergab
+     *   einen 24-90 Padding-Rand rundherum, transparent, durch den
+     *   die Idle-Komposition (topbar, action-bar, screensaver) durch-
+     *   schien. Korrektur: pad_all=0 am overlay-Root, Padding kommt
+     *   auf einen dedizierten content-Container der ueber backdrop+
+     *   scrim liegt aber wieder selbst full-bleed-Frame ist. */
     lv_obj_t *overlay = lv_obj_create(parent);
     lv_obj_remove_style_all(overlay);
     lv_obj_set_size(overlay, lv_pct(100), lv_pct(100));
     lv_obj_align(overlay, LV_ALIGN_TOP_LEFT, 0, 0);
     lv_obj_set_style_bg_opa(overlay, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(overlay, 0, 0);
-    /* CSS padding: 90px 24px 56px - top large, sides 24, bottom 56 */
-    lv_obj_set_style_pad_top(overlay, 90, 0);
-    lv_obj_set_style_pad_left(overlay, UI_SPACE_7, 0);
-    lv_obj_set_style_pad_right(overlay, UI_SPACE_7, 0);
-    lv_obj_set_style_pad_bottom(overlay, 56, 0);
-    lv_obj_set_flex_flow(overlay, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(overlay, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_all(overlay, 0, 0);  /* WICHTIG S4-02b */
     lv_obj_clear_flag(overlay, LV_OBJ_FLAG_SCROLLABLE);
-    /* OVERFLOW_VISIBLE damit die Pulse-Rings (im hero-wrap weiter
-     * innen) NICHT an der overlay-Padding-Box abgeschnitten werden.
-     * Die ganze Kette vom Pulse bis zum Top-Layer-Container ist clip-
-     * frei. */
+    /* OVERFLOW_VISIBLE: pulse rings duerfen ueber overlay-Bounds
+     * hinaus rendern, falls Bell-Hero-Wrap an der Kante sitzt. */
     lv_obj_add_flag(overlay, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
     s_overlay = overlay;
 
-    /* Schicht 1: opake Vollbild-Backdrop. Schwarz, deckt ALLES
-     * darunter ab. Ist im Flex-Layout des overlay aber per absoluter
-     * Positionierung aus dem Layout-Flow rausgenommen damit die
-     * Bell + Text + Buttons trotzdem im Flex sitzen. */
+    /* Schicht 1: opake Vollbild-Backdrop. JETZT echte 800x1280 weil
+     * overlay kein Padding mehr hat. Camera-Placeholder fuer S5+. */
     lv_obj_t *backdrop = lv_obj_create(overlay);
     lv_obj_remove_style_all(backdrop);
     lv_obj_set_size(backdrop, lv_pct(100), lv_pct(100));
@@ -276,11 +262,11 @@ lv_obj_t *scr_ringing_build(lv_obj_t *parent, const scr_ringing_data_t *data)
     lv_obj_set_style_radius(backdrop, 0, 0);
     lv_obj_clear_flag(backdrop, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(backdrop, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_flag(backdrop, LV_OBJ_FLAG_FLOATING);  /* aus Flex raus */
 
-    /* Schicht 2: 35%-Scrim. Schwarz halbtransparent ueber der Backdrop.
-     * Wenn spaeter ein Kamera-Stream die Backdrop ersetzt, bleibt der
-     * Scrim als Master-Chat-konforme Abdunkelung darueber. */
+    /* Schicht 2: 35%-Scrim, ebenfalls full-bleed 800x1280. Solange
+     * backdrop schwarz-opak ist, ist der Scrim visuell redundant;
+     * darf trotzdem bleiben fuer wenn der echte Camera-Stream
+     * spaeter die Backdrop ersetzt. */
     lv_obj_t *scrim = lv_obj_create(overlay);
     lv_obj_remove_style_all(scrim);
     lv_obj_set_size(scrim, lv_pct(100), lv_pct(100));
@@ -291,13 +277,34 @@ lv_obj_t *scr_ringing_build(lv_obj_t *parent, const scr_ringing_data_t *data)
     lv_obj_set_style_radius(scrim, 0, 0);
     lv_obj_clear_flag(scrim, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(scrim, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_flag(scrim, LV_OBJ_FLAG_FLOATING);     /* aus Flex raus */
 
-    /* Bell hero - im Flex */
-    build_bell_hero(overlay);
+    /* Schicht 3: content-Frame. Full-bleed Box, aber MIT dem alten
+     * Master-Chat-Padding 90/24/24/56 so dass Bell+Text+Actions ihre
+     * Abstaende behalten. Transparent. Flex-Column wie frueher der
+     * overlay-Container. OVERFLOW_VISIBLE auch hier damit Pulse-Rings
+     * die Content-Bounds nach aussen sprengen koennen. */
+    lv_obj_t *content = lv_obj_create(overlay);
+    lv_obj_remove_style_all(content);
+    lv_obj_set_size(content, lv_pct(100), lv_pct(100));
+    lv_obj_align(content, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_bg_opa(content, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(content, 0, 0);
+    /* CSS padding: 90px 24px 56px - top large, sides 24, bottom 56 */
+    lv_obj_set_style_pad_top(content, 90, 0);
+    lv_obj_set_style_pad_left(content, UI_SPACE_7, 0);
+    lv_obj_set_style_pad_right(content, UI_SPACE_7, 0);
+    lv_obj_set_style_pad_bottom(content, 56, 0);
+    lv_obj_set_flex_flow(content, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(content, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_clear_flag(content, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(content, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(content, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
+
+    /* Bell hero - im content-Flex */
+    build_bell_hero(content);
 
     /* .ring-text: text-align center, margin-top space-9 */
-    lv_obj_t *txt = lv_obj_create(overlay);
+    lv_obj_t *txt = lv_obj_create(content);
     lv_obj_remove_style_all(txt);
     lv_obj_set_size(txt, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
     lv_obj_set_style_bg_opa(txt, LV_OPA_TRANSP, 0);
@@ -323,7 +330,7 @@ lv_obj_t *scr_ringing_build(lv_obj_t *parent, const scr_ringing_data_t *data)
     s_sub_label = sub;
 
     /* Spacer to push ring-actions to bottom (CSS: margin-top auto) */
-    lv_obj_t *spacer = lv_obj_create(overlay);
+    lv_obj_t *spacer = lv_obj_create(content);
     lv_obj_remove_style_all(spacer);
     lv_obj_set_size(spacer, 1, 1);
     lv_obj_set_flex_grow(spacer, 1);
@@ -331,7 +338,7 @@ lv_obj_t *scr_ringing_build(lv_obj_t *parent, const scr_ringing_data_t *data)
     lv_obj_set_style_border_width(spacer, 0, 0);
 
     /* .ring-actions: flex row, space-between, gap 16, padding 16 */
-    lv_obj_t *actions = lv_obj_create(overlay);
+    lv_obj_t *actions = lv_obj_create(content);
     lv_obj_remove_style_all(actions);
     lv_obj_set_size(actions, lv_pct(100), LV_SIZE_CONTENT);
     lv_obj_set_style_bg_opa(actions, LV_OPA_TRANSP, 0);
