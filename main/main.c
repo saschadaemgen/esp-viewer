@@ -129,6 +129,7 @@ typedef enum {
     UNIFIX_ACTION_CONFIG_FETCH,   /* GET /esp/config (boot + config.changed) */
     UNIFIX_ACTION_SETTINGS_SAVE,  /* POST /esp/settings - stubbed until S14-04 */
     UNIFIX_ACTION_WEATHER_FETCH,  /* GET /esp/weather (S03-10: 15min poll) */
+    UNIFIX_ACTION_UNREAD_FETCH,   /* GET /esp/unread-count (S03-12 boot + on demand) */
     /* UNIFIX_ACTION_ANSWER -> spaeter mit Audio */
 } unifix_action_t;
 
@@ -214,6 +215,23 @@ static void unifix_action_worker(void *arg)
             } else {
                 ESP_LOGW(TAG, "Worker: WEATHER fetch failed: %s",
                          esp_err_to_name(w_err));
+            }
+            break;
+        }
+        case UNIFIX_ACTION_UNREAD_FETCH: {
+            int count = 0;
+            esp_err_t u_err = unifix_client_get_unread_count(&count);
+            if (u_err == ESP_OK) {
+                ESP_LOGI(TAG, "Worker: UNREAD count=%d", count);
+                if (bsp_display_lock(200)) {
+                    scr_idle_set_unread_count(count);
+                    bsp_display_unlock();
+                } else {
+                    ESP_LOGW(TAG, "Worker: UNREAD display_lock timeout");
+                }
+            } else {
+                ESP_LOGW(TAG, "Worker: UNREAD fetch failed: %s",
+                         esp_err_to_name(u_err));
             }
             break;
         }
@@ -335,6 +353,22 @@ static void on_settings_icon_click(lv_event_t *e)
     (void)e;
     ESP_LOGI(TAG, "Settings icon pressed (toggle)");
     scr_idle_toggle_settings();
+}
+
+
+/* ============================================================
+ * Verlauf-Button click handler (S03-12)
+ *
+ * Echter Verlauf-Screen kommt erst Saison 15. Heute: nur Toast
+ * "kommt in Kuerze" damit der User weiss dass der Button absicht-
+ * lich da ist.
+ * ============================================================ */
+static void on_history_click(lv_event_t *e)
+{
+    (void)e;
+    ESP_LOGI(TAG, "History button clicked - feature coming in S15");
+    /* "Kuerze" mit Umlaut: \xc3\xbc fuer u-Umlaut UTF-8 */
+    toast_show("Verlauf-Funktion kommt in K\xc3\xbcrze");
 }
 
 
@@ -494,6 +528,14 @@ static void on_config_changed(const unifix_config_t *cfg)
         if (xQueueSend(s_unifix_action_queue, &wreq, 0) != pdTRUE) {
             ESP_LOGW(TAG, "on_config_changed: weather queue full");
         }
+
+        /* S03-12: Unread-Count als Fallback re-fetchen. Master-Chat
+         * schickt zusaetzlich eigene SSE unread_count-Events; das hier
+         * ist die Versicherung gegen verlorene Events. */
+        unifix_request_t ureq = { .action = UNIFIX_ACTION_UNREAD_FETCH };
+        if (xQueueSend(s_unifix_action_queue, &ureq, 0) != pdTRUE) {
+            ESP_LOGW(TAG, "on_config_changed: unread queue full");
+        }
     }
 }
 
@@ -552,6 +594,33 @@ static void on_sse_event(const char *event_name, const char *data)
             if (xQueueSend(s_unifix_action_queue, &req, 0) != pdTRUE) {
                 ESP_LOGW(TAG, "config.changed: action queue full");
             }
+        }
+        return;
+    }
+
+    if (strcmp(event_name, "unread_count") == 0) {
+        /* S03-12: Server schickt {"count": N} bei jeder Aenderung des
+         * unread-Counts (z.B. neue Klingel verpasst, Mark-As-Read auf
+         * anderem Geraet). Payload ist klein - cJSON-Parse direkt im
+         * SSE-Task ist OK (Stack-Setting nach S03-07-FIX01 reicht). */
+        cJSON *root = cJSON_Parse(data);
+        if (root) {
+            cJSON *cnt = cJSON_GetObjectItem(root, "count");
+            if (cJSON_IsNumber(cnt)) {
+                int count = cnt->valueint;
+                ESP_LOGI(TAG, "[SSE] unread_count: %d", count);
+                if (bsp_display_lock(200)) {
+                    scr_idle_set_unread_count(count);
+                    bsp_display_unlock();
+                } else {
+                    ESP_LOGW(TAG, "unread_count: display_lock timeout");
+                }
+            } else {
+                ESP_LOGW(TAG, "unread_count: 'count' missing or not a number");
+            }
+            cJSON_Delete(root);
+        } else {
+            ESP_LOGW(TAG, "unread_count: failed to parse JSON: %s", data);
         }
         return;
     }
@@ -729,6 +798,10 @@ static void on_got_ip(void)
             scr_settings_set_close_handler(on_settings_close_click, NULL);
             scr_idle_set_settings_handler(on_settings_icon_click, NULL);
 
+            /* Verlauf-Button-Click (S03-12): zeigt Coming-Soon-Toast
+             * bis der echte Verlauf-Screen in Saison 15 kommt. */
+            scr_idle_set_history_handler(on_history_click, NULL);
+
             /* Build screensaver view as a sibling of stream/settings.
              * Registered as the third mode in the modes-container. */
             language_t initial_lang = time_sync_lang_from_str(cfg.language);
@@ -845,6 +918,12 @@ static void on_got_ip(void)
                                  WEATHER_POLL_INTERVAL_MS, NULL);
                 bsp_display_unlock();
             }
+
+            /* S03-12: Initialer Unread-Count beim Boot. Danach hauptsaechlich
+             * via SSE unread_count-Event aktualisiert; ein periodischer
+             * Refetch ist nicht noetig. */
+            unifix_request_t unread_req = { .action = UNIFIX_ACTION_UNREAD_FETCH };
+            xQueueSend(s_unifix_action_queue, &unread_req, 0);
         }
 
         ESP_LOGI(TAG, "Starting SSE-Listener for /esp/events ...");
