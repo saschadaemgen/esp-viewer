@@ -218,21 +218,34 @@ static lv_obj_t *build_ring_col(lv_obj_t *parent, const char *symbol,
 /* ---------- Top-level build ---------- */
 lv_obj_t *scr_ringing_build(lv_obj_t *parent, const scr_ringing_data_t *data)
 {
-    /* .ringing: dominanter Vollbild-Screen ueber Stream (S4-01).
+    /* .ringing: dominanter Vollbild-Screen auf dem LVGL-Top-Layer
+     * (S4-01b - Korrektur zu S4-01).
      *
-     * Master-Chat-Spec: Anrufer-Kamera Vollbild + Scrim rgba(0,0,0,0.35).
-     * Auf ESP heisst das: schwarzer Background mit 35% Opacity ueber
-     * dem stream_view, der weiter aktiv ist und die Kamera zeigt.
-     * Vorher waren es 70% (zu dunkel), die alte "0.45 stream-dim"-
-     * Logik des Web-Viewers gibt es bei uns nicht.
+     * Architektur:
+     *   parent (lv_layer_top()) - liegt ueber ALLEN normalen Screens
+     *     overlay (transparent, OVERFLOW_VISIBLE fuer Pulse-Rings)
+     *       backdrop  Vollbild schwarz opak (Camera-Placeholder)
+     *       scrim     Vollbild schwarz 35% (Master-Chat-Scrim)
+     *       content   Bell-Hero + Text + Action-Buttons
      *
-     * 0.35 als LVGL-Wert: 0.35 * 255 = 89. */
+     * Warum so:
+     * - Vorher war das Overlay Kind des idle_screen + nur per
+     *   move_foreground gehoben. Bildschirmschoner als Geschwister
+     *   blieb sichtbar (Scrim 35% deckt nicht ab), Pulse-Clip vom
+     *   idle-Vorfahr, Restore-Race bei Cancel - alles in einer
+     *   Wurzel.
+     * - lv_layer_top() ist garantiert ueber lv_screen_active(),
+     *   damit ist die z-Order entkoppelt vom Idle-Screen.
+     * - Eine OPAKE schwarze Schicht UNTER dem Scrim ist der Camera-
+     *   Placeholder: damit scheint im Klingelzustand NICHTS vom
+     *   vorigen Screen durch. Wenn der Anrufer-Stream spaeter in
+     *   diesen Klingel-Screen embeddet wird (S5+), ersetzt er die
+     *   schwarze Schicht, Scrim bleibt unangetastet. */
     lv_obj_t *overlay = lv_obj_create(parent);
     lv_obj_remove_style_all(overlay);
     lv_obj_set_size(overlay, lv_pct(100), lv_pct(100));
     lv_obj_align(overlay, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_set_style_bg_color(overlay, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_bg_opa(overlay, 89, 0);  /* 0.35 scrim */
+    lv_obj_set_style_bg_opa(overlay, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(overlay, 0, 0);
     /* CSS padding: 90px 24px 56px - top large, sides 24, bottom 56 */
     lv_obj_set_style_pad_top(overlay, 90, 0);
@@ -242,9 +255,45 @@ lv_obj_t *scr_ringing_build(lv_obj_t *parent, const scr_ringing_data_t *data)
     lv_obj_set_flex_flow(overlay, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(overlay, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_clear_flag(overlay, LV_OBJ_FLAG_SCROLLABLE);
+    /* OVERFLOW_VISIBLE damit die Pulse-Rings (im hero-wrap weiter
+     * innen) NICHT an der overlay-Padding-Box abgeschnitten werden.
+     * Die ganze Kette vom Pulse bis zum Top-Layer-Container ist clip-
+     * frei. */
+    lv_obj_add_flag(overlay, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
     s_overlay = overlay;
 
-    /* Bell hero */
+    /* Schicht 1: opake Vollbild-Backdrop. Schwarz, deckt ALLES
+     * darunter ab. Ist im Flex-Layout des overlay aber per absoluter
+     * Positionierung aus dem Layout-Flow rausgenommen damit die
+     * Bell + Text + Buttons trotzdem im Flex sitzen. */
+    lv_obj_t *backdrop = lv_obj_create(overlay);
+    lv_obj_remove_style_all(backdrop);
+    lv_obj_set_size(backdrop, lv_pct(100), lv_pct(100));
+    lv_obj_align(backdrop, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_bg_color(backdrop, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(backdrop, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(backdrop, 0, 0);
+    lv_obj_set_style_radius(backdrop, 0, 0);
+    lv_obj_clear_flag(backdrop, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(backdrop, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(backdrop, LV_OBJ_FLAG_FLOATING);  /* aus Flex raus */
+
+    /* Schicht 2: 35%-Scrim. Schwarz halbtransparent ueber der Backdrop.
+     * Wenn spaeter ein Kamera-Stream die Backdrop ersetzt, bleibt der
+     * Scrim als Master-Chat-konforme Abdunkelung darueber. */
+    lv_obj_t *scrim = lv_obj_create(overlay);
+    lv_obj_remove_style_all(scrim);
+    lv_obj_set_size(scrim, lv_pct(100), lv_pct(100));
+    lv_obj_align(scrim, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_bg_color(scrim, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(scrim, 89, 0);  /* 0.35 */
+    lv_obj_set_style_border_width(scrim, 0, 0);
+    lv_obj_set_style_radius(scrim, 0, 0);
+    lv_obj_clear_flag(scrim, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(scrim, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(scrim, LV_OBJ_FLAG_FLOATING);     /* aus Flex raus */
+
+    /* Bell hero - im Flex */
     build_bell_hero(overlay);
 
     /* .ring-text: text-align center, margin-top space-9 */
@@ -368,7 +417,12 @@ void scr_ringing_show(void)
 {
     if (!s_overlay) return;
 
-    /* Bring to top so the overlay sits above stream + screensaver + settings. */
+    /* S4-01b: Overlay liegt jetzt auf lv_layer_top() - der Layer
+     * selbst ist immer ueber lv_screen_active(). Innerhalb des
+     * Top-Layers koennen mehrere Objekte existieren (z.B. ein
+     * spaeteres Toast-Overlay). move_foreground innerhalb des
+     * Top-Layers stellt sicher dass wir oben SIND, falls Geschwister
+     * vorhanden. */
     lv_obj_move_foreground(s_overlay);
 
     /* Cancel any prior fade-out so they don't fight. */
@@ -393,6 +447,10 @@ void scr_ringing_hide(void)
     if (!s_overlay) return;
     if (lv_obj_has_flag(s_overlay, LV_OBJ_FLAG_HIDDEN)) return;
 
+    /* S4-01b: Race-Resistanz. lv_anim_delete kann eine evtl. laufende
+     * Fade-In-Anim aus scr_ringing_show abbrechen. Wir setzen die
+     * Opacity nicht auf TRANSP zurueck, weil die Fade-Out-Anim sie
+     * von dem aktuellen Wert weiter herunterzieht (kein Sprung). */
     lv_anim_delete(s_overlay, overlay_opa_anim_cb);
 
     lv_anim_t a;

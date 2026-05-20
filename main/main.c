@@ -853,7 +853,13 @@ static void on_got_ip(void)
         scr_ringing_data_t ring = {
             .door_name = door_name,
         };
-        s_ringing_overlay = scr_ringing_build(s_idle_screen, &ring);
+        /* S4-01b: Klingel-Screen auf lv_layer_top() statt s_idle_screen.
+         * Top-Layer liegt garantiert ueber ALLEN normalen Screens (Idle,
+         * Loading, etc.) - der vorher noetige move_foreground-Trick mit
+         * idle_screen-Geschwistern (Settings, Screensaver) ist damit weg.
+         * Klingel-Display ist jetzt strukturell oben statt nur "vorne
+         * verschoben". */
+        s_ringing_overlay = scr_ringing_build(lv_layer_top(), &ring);
         lv_obj_add_flag(s_ringing_overlay, LV_OBJ_FLAG_HIDDEN);
 
         /* Wire the ringing overlay button click handlers */
