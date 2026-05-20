@@ -33,6 +33,8 @@ typedef struct {
     lv_obj_t *screensaver_view;
     lv_obj_t *settings_view;
     lv_obj_t *settings_btn;        /* the third ctrl-group icon */
+    lv_obj_t *hist_btn;            /* Verlauf-Button in der Action-Bar */
+    lv_obj_t *hist_badge;          /* Unread-Count-Punkt am Verlauf-Button */
     bool      settings_shown;
     scr_idle_mode_t current_mode;  /* Stream or Screensaver - settings is overlay */
 } scr_idle_refs_t;
@@ -450,9 +452,35 @@ static lv_obj_t *build_actions(lv_obj_t *parent, const scr_idle_data_t *data)
     lv_obj_t *btn_door = build_action_btn_primary(row);
     PLACE_ICON(btn_door, ICON_LOCK_OPEN, UI_COLOR_TEXT_ON_ACCENT);
 
-    /* Verlauf - glass + clock icon (with optional unread badge) */
-    lv_obj_t *btn_hist = build_action_btn_glass(row, data->has_unread);
+    /* Verlauf - glass + clock icon. Badge IMMER gebaut (initial
+     * HIDDEN). scr_idle_set_unread_count togglet die Sichtbarkeit
+     * spaeter dynamisch (S03-12). */
+    lv_obj_t *btn_hist = build_action_btn_glass(row, false);
     PLACE_ICON(btn_hist, ICON_HISTORY, UI_COLOR_TEXT);
+
+    /* Persistentes Badge - gleicher Stil wie die conditional-Variante
+     * in build_action_btn_glass, aber Referenz wird gespeichert. */
+    lv_obj_t *badge = lv_obj_create(btn_hist);
+    lv_obj_remove_style_all(badge);
+    lv_obj_set_size(badge, 8, 8);
+    lv_obj_set_style_radius(badge, UI_RADIUS_FULL, 0);
+    lv_obj_set_style_bg_color(badge, UI_COLOR_ACCENT, 0);
+    lv_obj_set_style_bg_opa(badge, LV_OPA_COVER, 0);
+    lv_obj_set_style_shadow_color(badge, UI_COLOR_ACCENT, 0);
+    lv_obj_set_style_shadow_width(badge, 6, 0);
+    lv_obj_set_style_shadow_opa(badge, UI_OPA_ACCENT_GLOW, 0);
+    lv_obj_align(badge, LV_ALIGN_TOP_RIGHT, -8, 8);
+    lv_obj_clear_flag(badge, LV_OBJ_FLAG_SCROLLABLE);
+    /* Initial-Sichtbarkeit basiert auf data->has_unread - der Boot-
+     * Fetch (scr_idle_set_unread_count) ueberschreibt das spaeter. */
+    if (!data->has_unread) {
+        lv_obj_add_flag(badge, LV_OBJ_FLAG_HIDDEN);
+    }
+    s_refs.hist_badge = badge;
+
+    /* Button anklickbar - Handler kommt via scr_idle_set_history_handler. */
+    lv_obj_add_flag(btn_hist, LV_OBJ_FLAG_CLICKABLE);
+    s_refs.hist_btn = btn_hist;
 
     #undef PLACE_ICON
 
@@ -663,4 +691,20 @@ void scr_idle_set_settings_handler(lv_event_cb_t cb, void *user_data)
 {
     if (!s_refs.settings_btn || !cb) return;
     lv_obj_add_event_cb(s_refs.settings_btn, cb, LV_EVENT_CLICKED, user_data);
+}
+
+void scr_idle_set_history_handler(lv_event_cb_t cb, void *user_data)
+{
+    if (!s_refs.hist_btn || !cb) return;
+    lv_obj_add_event_cb(s_refs.hist_btn, cb, LV_EVENT_CLICKED, user_data);
+}
+
+void scr_idle_set_unread_count(int count)
+{
+    if (!s_refs.hist_badge) return;
+    if (count > 0) {
+        lv_obj_clear_flag(s_refs.hist_badge, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(s_refs.hist_badge, LV_OBJ_FLAG_HIDDEN);
+    }
 }

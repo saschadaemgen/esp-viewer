@@ -156,6 +156,22 @@ void scr_idle_toggle_settings(void);
  */
 void scr_idle_set_settings_handler(lv_event_cb_t cb, void *user_data);
 
+/**
+ * Attaches a click handler to the Verlauf-Button (rechter Button in
+ * der Action-Bar). Setter-Pattern wie beim Settings-Icon damit der
+ * Toast-Handler in main.c lebt (wo toast.h schon includiert ist).
+ */
+void scr_idle_set_history_handler(lv_event_cb_t cb, void *user_data);
+
+/**
+ * Setzt den Unread-Count und togglet das Badge am Verlauf-Button.
+ *   count == 0  -> Badge HIDDEN
+ *   count >  0  -> Badge sichtbar (Punkt, S15 ggf. mit Pulse)
+ *
+ * Heute zeigt das Badge keinen Zaehler, nur Praesenz. Idempotent.
+ */
+void scr_idle_set_unread_count(int count);
+
 #ifdef __cplusplus
 }
 #endif
