@@ -477,6 +477,12 @@ static void on_config_changed(const unifix_config_t *cfg)
      * des selben Mieters hat es gesetzt). Setter ist idempotent. */
     scr_screensaver_set_clock_layout(cfg->clock_layout);
 
+    /* S03-11: Sprache durchreichen. Vorher hingen wir am Cache-Wert
+     * fest sobald scr_screensaver_build mit cfg.language gebaut hatte -
+     * Server-Update danach hat den Bildschirmschoner nicht erreicht
+     * (BUG 1). Setter macht Datums-Refresh selbst. */
+    scr_screensaver_set_language(time_sync_lang_from_str(cfg->language));
+
     bsp_display_unlock();
 
     /* S03-10: Wetter neu holen - config.changed kann Standort-Wechsel
