@@ -3,5 +3,9 @@ dependencies:
   lvgl/lvgl:
     version: 9.2.*
     public: true
+  # S4-08 Rollback: esp_lvgl_port 2.7+ braucht LV_COLOR_FORMAT_RGB565_SWAPPED
+  # (gibt's erst in LVGL 9.5). Mit LVGL 9.2.2 muessen wir esp_lvgl_port <2.7
+  # halten. ^2.5.0 = "kompatibel ab 2.5, <3", praktisch 2.5.x oder 2.6.x.
+  espressif/esp_lvgl_port: "~2.5"
   espressif/esp_hosted: ^2.0
   espressif/esp_wifi_remote: ^1.0
