@@ -210,6 +210,10 @@ static void unifix_action_worker(void *arg)
             if (w_err == ESP_OK) {
                 ESP_LOGI(TAG, "Worker: WEATHER %d C, '%s', icon='%s'",
                          w.temp_c, w.condition_text, w.icon_code);
+                /* TODO S4+: bsp_display_lock-Obergrenze = 2000ms (S4-05
+                 * Doorbell-Pfad). Worker (200ms) gibt bei aktiver Klingel
+                 * sauber auf. Naechste config.changed/poll-Iteration ersetzt
+                 * den verpassten Set, kein Datenverlust - daher okay so. */
                 if (bsp_display_lock(200)) {
                     scr_screensaver_set_weather(w.temp_c,
                                                  w.condition_text,
