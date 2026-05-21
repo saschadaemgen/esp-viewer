@@ -1066,6 +1066,42 @@ static void wifi_init(void)
 
 
 /* ============================================================
+ * Task-CPU-Logger (S4-10)
+ *
+ * Briefing: "(a) periodisch vTaskGetRunTimeStats ins Log schreiben".
+ * Sasch sieht im Monitor welcher Task wieviel Runtime hat. Hilft die
+ * Stream-Compositing-Last konkret nachzuweisen statt zu raten.
+ *
+ * vTaskGetRunTimeStats gibt CUMULATIVE Runtime seit Boot pro Task aus,
+ * formatiert als "TaskName Runtime% \n" pro Zeile. Braucht aktive
+ * CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS (= y im sdkconfig) und
+ * CONFIG_FREERTOS_USE_STATS_FORMATTING_FUNCTIONS (= y).
+ *
+ * Cumulative reicht fuer den Vergleich: das Verhaeltnis der %-Spalten
+ * zueinander zeigt wo die CPU haengen bleibt. Wenn pro-Intervall noetig
+ * waere, muesste man Differenzen zwischen Aufrufen bilden - heben wir
+ * uns auf falls Sasch das spaeter braucht.
+ * ============================================================ */
+static void task_stats_logger_task(void *arg)
+{
+    (void)arg;
+    /* 64 byte pro Task * ~30 Tasks = 2KB minimum, 4KB sicher. */
+    char *stats_buf = heap_caps_malloc(4096, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!stats_buf) {
+        ESP_LOGE(TAG, "stats_logger: malloc failed, exiting");
+        vTaskDelete(NULL);
+        return;
+    }
+    while (1) {
+        vTaskDelay(pdMS_TO_TICKS(5000));
+        vTaskGetRunTimeStats(stats_buf);
+        ESP_LOGI(TAG, "==== Task CPU stats (cumulative since boot) ====\n%s",
+                 stats_buf);
+    }
+}
+
+
+/* ============================================================
  * app_main
  * ============================================================ */
 void app_main(void)
@@ -1117,6 +1153,11 @@ void app_main(void)
     /* Init unifix_config so listeners can register and the cache can
      * be queried even before wifi is up. */
     unifix_config_init();
+
+    /* S4-10: periodischer Task-CPU-Logger. Briefing-Plan, damit wir am
+     * Monitor SEHEN welcher Task wieviel CPU frisst (LVGL-Refresh?
+     * mjpeg? esp_hosted-RX? Stream-Compositing?). Cumulative seit Boot. */
+    xTaskCreate(task_stats_logger_task, "stats_log", 4096, NULL, 1, NULL);
 
     wifi_init();
 }
