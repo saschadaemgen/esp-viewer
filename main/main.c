@@ -85,6 +85,12 @@ static const char *TAG = "KOENIG";
 #define LOADING_TO_IDLE_DELAY_MS  500
 #define SCREEN_FADE_DURATION_MS   400
 
+/* S4-06: Loading-Screen wartet auf NTP-Sync, max so lange. So sind
+ * Uhr und Datum schon beim Umspringen da statt 2-3 Sekunden spaeter
+ * im Idle nachzulaufen. Bei NTP < timeout: sofort umschalten. */
+#define LOADING_NTP_WAIT_MS       8000
+#define LOADING_NTP_POLL_MS        100
+
 #define CANCEL_TOKEN_BUF_SIZE     64
 #define UNIFIX_QUEUE_DEPTH        4
 #define UNIFIX_WORKER_STACK       4096
@@ -717,7 +723,14 @@ static void weather_poll_tick(lv_timer_t *t)
 /* ============================================================
  * Switch from loading to idle screen
  * Called from esp_timer service task - takes LVGL lock.
+ *
+ * S4-06: poll-Modus. Schaltet erst um wenn ENTWEDER NTP synced ist
+ * (Uhr/Datum sofort da) ODER LOADING_NTP_WAIT_MS Total-Cap erreicht
+ * ist. Re-armed sich selbst alle 100ms via esp_timer_start_once.
  * ============================================================ */
+static esp_timer_handle_t s_loading_fade_timer = NULL;
+static int64_t            s_loading_wait_start_us = 0;
+
 static void fade_to_idle_cb(void *arg)
 {
     (void)arg;
@@ -725,12 +738,30 @@ static void fade_to_idle_cb(void *arg)
         ESP_LOGW(TAG, "fade_to_idle: idle screen not ready");
         return;
     }
-    if (!bsp_display_lock(200)) {
-        ESP_LOGW(TAG, "fade_to_idle: could not acquire display lock");
+
+    bool synced = time_sync_is_synced();
+    int64_t elapsed_ms = (esp_timer_get_time() - s_loading_wait_start_us) / 1000;
+    bool timed_out = elapsed_ms >= LOADING_NTP_WAIT_MS;
+
+    if (!synced && !timed_out) {
+        /* Noch warten - Timer neu starten fuer naechsten Poll. */
+        if (s_loading_fade_timer) {
+            esp_timer_start_once(s_loading_fade_timer, LOADING_NTP_POLL_MS * 1000);
+        }
         return;
     }
-    ESP_LOGI(TAG, "Switching from loading to idle screen (fade %dms)",
-             SCREEN_FADE_DURATION_MS);
+
+    if (!bsp_display_lock(200)) {
+        /* Lock gerade nicht verfuegbar - kurz spaeter nochmal versuchen.
+         * Sollte praktisch nie passieren da der Refresh-Task in
+         * der Wartephase wenig zu tun hat. */
+        if (s_loading_fade_timer) {
+            esp_timer_start_once(s_loading_fade_timer, LOADING_NTP_POLL_MS * 1000);
+        }
+        return;
+    }
+    ESP_LOGI(TAG, "Switching loading->idle (ntp=%d, waited=%lldms, fade %dms)",
+             synced, elapsed_ms, SCREEN_FADE_DURATION_MS);
     lv_screen_load_anim(s_idle_screen,
                         LV_SCR_LOAD_ANIM_FADE_ON,
                         SCREEN_FADE_DURATION_MS,
@@ -969,14 +1000,17 @@ static void on_got_ip(void)
     ESP_LOGI(TAG, "Starting stream pipeline ...");
     stream_pipeline_start(stream_slot);
 
-    /* Schedule the loading -> idle screen fade */
+    /* Schedule the loading -> idle screen fade.
+     * S4-06: erster Tick nach LOADING_TO_IDLE_DELAY_MS (Mindest-Anzeigezeit
+     * fuer die Glow-Anim), danach pollt fade_to_idle_cb selbst alle
+     * LOADING_NTP_POLL_MS bis NTP synced oder Total-Cap erreicht. */
+    s_loading_wait_start_us = esp_timer_get_time();
     esp_timer_create_args_t fade_args = {
         .callback = fade_to_idle_cb,
         .name = "screen_fade",
     };
-    esp_timer_handle_t fade_timer = NULL;
-    if (esp_timer_create(&fade_args, &fade_timer) == ESP_OK) {
-        esp_timer_start_once(fade_timer, LOADING_TO_IDLE_DELAY_MS * 1000);
+    if (esp_timer_create(&fade_args, &s_loading_fade_timer) == ESP_OK) {
+        esp_timer_start_once(s_loading_fade_timer, LOADING_TO_IDLE_DELAY_MS * 1000);
     }
 }
 
