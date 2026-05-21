@@ -115,3 +115,15 @@ CONFIG_MBEDTLS_ECDH_C=y
 CONFIG_MBEDTLS_ECDSA_C=y
 CONFIG_MBEDTLS_SHA256_C=y
 CONFIG_MBEDTLS_SHA512_C=y
+
+# === S4-08 Stage 0: Render-Performance ===
+# Shadow-Cache 0 -> 320: groesster Einzelgewinn beim 80px-Hero-Glow,
+# der sonst jeden Frame in SW neu berechnet wird.
+CONFIG_LV_DRAW_SW_SHADOW_CACHE_SIZE=320
+# Circle-Cache 4 -> 16: mehr gecachte Kreis-Masks (Pulse, Buttons).
+CONFIG_LV_DRAW_SW_CIRCLE_CACHE_SIZE=16
+# Simple-Layer-Puffer 24K -> 64K. In LVGL 9.2.2 ist das Symbol
+# ohne "SW_"-Prefix; nach 9.5-Upgrade (Stage 1) ggf. renamen.
+CONFIG_LV_DRAW_LAYER_SIMPLE_BUF_SIZE=65536
+# Draw-Thread-Stack 8K -> 32K als Reserve fuer PPA-Pfade in Stage 2.
+CONFIG_LV_DRAW_THREAD_STACK_SIZE=32768
