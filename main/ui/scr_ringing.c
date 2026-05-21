@@ -53,73 +53,29 @@ static lv_obj_t *s_accept_btn = NULL;
 static lv_obj_t *s_sub_label  = NULL;
 
 
-/* ---------- Bell hero with pulse rings ---------- */
+/* ---------- Bell hero ----------
+ *
+ * S4-09: stark vereinfacht. Vorher: Wrap mit ext_draw_size-Reserve fuer
+ * 3 Pulse-Ringe (Scale 2.2x) UND einen 80px-Soft-Shadow am Hero. Beide
+ * Effekte wurden in Software pro Frame neu rasterisiert und drueckten
+ * das UI auf ~1 frame / 4s.
+ *
+ * Jetzt: schlanker glassmorphic Kreis (cheap fill + 1px-border) mit
+ * einer wackelnden Lucide-Glocke drin. Kein Shadow, keine Pulse-Ringe.
+ * Wrap dient nur noch als Layout-Wrapper damit der Hero seinen festen
+ * Platz in der content-Flex-Spalte bekommt - keine Spezial-Flags noetig. */
 static void build_bell_hero(lv_obj_t *parent)
 {
-    /* .bell-hero-wrap: Container fuer Bell + 3 Pulse-Rings.
-     *
-     * S4-01-Fix: Pulse-Rings skalieren auf 2.2x (UI_BELL_HERO_SIZE * 2.2
-     * ~= 610px). LV_OBJ_FLAG_OVERFLOW_VISIBLE schaltet das Child-
-     * Clipping konzeptionell ab.
-     *
-     * S4-07 Glow-Fix: OVERFLOW_VISIBLE allein reicht NICHT. In LVGL 9
-     * (lv_refr.c:131-141) ist die Kinder-Clip-Area = wrap->coords +
-     * wrap->ext_draw_size, und ohne transform_width/_height bleibt
-     * ext_draw_size = 0. Folge: Wrap clippt die Kinder trotzdem an
-     * seinen 277px-Bounds, der 80px-Hero-Glow wird zum Kasten
-     * abgeschnitten. Mit transform_width/_height = 170 wird die
-     * Kinder-Clip-Area 277+340 = 617px - genug fuer Pulse-Rings
-     * (Layer 617) UND Hero-Glow (Layer 277+162=439). */
     lv_obj_t *wrap = lv_obj_create(parent);
     lv_obj_remove_style_all(wrap);
     lv_obj_set_size(wrap, UI_BELL_HERO_SIZE, UI_BELL_HERO_SIZE);
     lv_obj_set_style_bg_opa(wrap, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(wrap, 0, 0);
     lv_obj_clear_flag(wrap, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(wrap, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
-    /* S4-07: ext_draw_size hochziehen damit die Kinder-Clip-Area gross
-     * genug ist fuer Pulse-Scale 2.2x und Hero-Glow 80px. Bounding-Box
-     * des Wraps bleibt 277x277 -> KEIN Layout-Shift im content-Flex. */
-    lv_obj_set_style_transform_width(wrap, 170, 0);
-    lv_obj_set_style_transform_height(wrap, 170, 0);
 
-    /* 3 .bell-pulse rings (border-only circles, accent-soft border).
-     * Skalieren via ui_anim_bell_pulse 0.6x -> 2.2x, phasenversetzt
-     * je 800ms.
-     *
-     * S4-06 Pulse-Fix: transform_scale wird in LVGL 9 von
-     * lv_obj_calculate_ext_draw_size NICHT mitberechnet (nur shadow_,
-     * outline_, transform_width/_height). Folge: Render-Layer der Ring-
-     * Box bleibt 277x277, der 2.2x-Output wird beim Compositing in den
-     * 277x277-Rahmen geschnitten -> sichtbarer, abgerundeter Kasten um
-     * die Glocke (genau das was im Geraete-Log d=0 size=277x277,
-     * radius=CIRCLE, ovf_vis=0 erzeugt hat).
-     *
-     * Wir extenden ext_draw_size manuell via transform_width/_height auf
-     * 170px pro Seite (>166 = (2.2-1)/2 * 277). Der Layer ist dann
-     * 277+340 = 617x617, der Pulse atmet frei als Kreis nach aussen. */
-    for (int i = 0; i < 3; i++) {
-        lv_obj_t *ring = lv_obj_create(wrap);
-        lv_obj_remove_style_all(ring);
-        lv_obj_set_size(ring, UI_BELL_HERO_SIZE, UI_BELL_HERO_SIZE);
-        lv_obj_center(ring);
-        lv_obj_set_style_radius(ring, UI_RADIUS_FULL, 0);
-        lv_obj_set_style_bg_opa(ring, LV_OPA_TRANSP, 0);
-        /* CSS: border 1.5px solid var(--color-accent-soft) */
-        lv_obj_set_style_border_color(ring, UI_COLOR_ACCENT, 0);
-        lv_obj_set_style_border_opa(ring, UI_OPA_ACCENT_SOFT, 0);
-        lv_obj_set_style_border_width(ring, 2, 0);
-        lv_obj_clear_flag(ring, LV_OBJ_FLAG_SCROLLABLE);
-        /* S4-06: ext_draw_size manuell fuer transform_scale 2.2x reservieren */
-        lv_obj_set_style_transform_width(ring, 170, 0);
-        lv_obj_set_style_transform_height(ring, 170, 0);
-        ui_anim_bell_pulse(ring, i * 800);
-    }
-
-    /* .bell-hero: glassmorphic Kreis um die Bell. Web-CSS:
+    /* .bell-hero: glassmorphic Kreis. Web-CSS:
      *   bg     rgba(255,255,255,0.08)   ~ 20/255 weiss-opa
-     *   border 1px rgba(255,255,255,0.18) ~ 46/255 weiss-opa
-     *   shadow 0 0 50px accent-glow + 0 0 100px accent-soft */
+     *   border 1px rgba(255,255,255,0.18) ~ 46/255 weiss-opa */
     lv_obj_t *hero = lv_obj_create(wrap);
     lv_obj_remove_style_all(hero);
     lv_obj_set_size(hero, UI_BELL_HERO_SIZE, UI_BELL_HERO_SIZE);
@@ -130,19 +86,11 @@ static void build_bell_hero(lv_obj_t *parent)
     lv_obj_set_style_border_color(hero, UI_COLOR_TEXT, 0);
     lv_obj_set_style_border_opa(hero, 46, 0);  /* 0.18 */
     lv_obj_set_style_border_width(hero, 1, 0);
-    lv_obj_set_style_shadow_color(hero, UI_COLOR_ACCENT, 0);
-    lv_obj_set_style_shadow_width(hero, 80, 0);
-    lv_obj_set_style_shadow_opa(hero, UI_OPA_ACCENT_GLOW, 0);
     lv_obj_clear_flag(hero, LV_OBJ_FLAG_SCROLLABLE);
-    /* S4-07: hero-Layer-Reserve auf volle 80px Shadow-Width pinnen.
-     * Defaultmaessig berechnet LVGL fuer Shadow nur shadow_width/2 + 1
-     * = 41 (siehe lv_obj_draw.c:259-270). 41 reicht knapp fuer den
-     * halbtransparenten Aussen-Halo, aber wir wollen den vollen 80px-
-     * Glow garantieren, daher explizit pinnen. */
-    lv_obj_set_style_transform_width(hero, 80, 0);
-    lv_obj_set_style_transform_height(hero, 80, 0);
 
-    /* Bell icon - Lucide ICON_BELL at 88px (matches 80x80 SVG in template) */
+    /* Bell icon - Lucide ICON_BELL bei UI_BELL_HERO_ICON (88px). Im 200er
+     * Kreis sitzt das Icon mittig (lv_obj_center relativ zum hero, NICHT
+     * zum wrap - briefing-explicit). */
     lv_obj_t *icon = lv_label_create(hero);
     lv_label_set_text(icon, ICON_BELL);
     lv_obj_set_style_text_font(icon, &lucide_88, 0);

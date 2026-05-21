@@ -74,70 +74,19 @@ void ui_anim_breathe(lv_obj_t *obj)
 
 
 /* ============================================================
- * BELL PULSE (expanding ring)
+ * BELL WOBBLE (Pendulum)
  * ------------------------------------------------------------
- * Web-CSS-Aequivalent:
- *   0%   { transform: scale(0.6); opacity: 0.9; }
- *   100% { transform: scale(2.2); opacity: 0;   }
- * ease-out, 2400ms, infinite, mit delay-Versatz fuer p2/p3
+ * S4-09: vorher CSS-Pattern (kurzer Burst alle 2400ms mit Pause).
+ * Sasch will "schwingt sanft hin und her wie eine echte laeutende
+ * Glocke" -> kontinuierliches Pendel, kein Burst-mit-Pause.
  *
- * KEIN ping-pong - der Ring expandiert immer nur auswaerts,
- * dann startet er neu klein.
- * ============================================================ */
-
-void ui_anim_bell_pulse(lv_obj_t *obj, uint32_t delay_ms)
-{
-    if (!obj) return;
-
-    /* Pivot zentriert fuer Scale */
-    lv_obj_set_style_transform_pivot_x(obj, LV_PCT(50), 0);
-    lv_obj_set_style_transform_pivot_y(obj, LV_PCT(50), 0);
-
-    /* Scale: 153 (~0.6) -> 563 (~2.2) */
-    lv_anim_t a_scale;
-    lv_anim_init(&a_scale);
-    lv_anim_set_var(&a_scale, obj);
-    lv_anim_set_values(&a_scale, 153, 563);
-    lv_anim_set_duration(&a_scale, UI_DUR_BELL_PULSE);
-    lv_anim_set_delay(&a_scale, delay_ms);
-    lv_anim_set_repeat_count(&a_scale, LV_ANIM_REPEAT_INFINITE);
-    lv_anim_set_repeat_delay(&a_scale, 0);
-    lv_anim_set_path_cb(&a_scale, lv_anim_path_ease_out);
-    lv_anim_set_exec_cb(&a_scale, anim_scale_set);
-    lv_anim_start(&a_scale);
-
-    /* Opacity: 230 (~0.9) -> 0 */
-    lv_anim_t a_opa;
-    lv_anim_init(&a_opa);
-    lv_anim_set_var(&a_opa, obj);
-    lv_anim_set_values(&a_opa, 230, 0);
-    lv_anim_set_duration(&a_opa, UI_DUR_BELL_PULSE);
-    lv_anim_set_delay(&a_opa, delay_ms);
-    lv_anim_set_repeat_count(&a_opa, LV_ANIM_REPEAT_INFINITE);
-    lv_anim_set_repeat_delay(&a_opa, 0);
-    lv_anim_set_path_cb(&a_opa, lv_anim_path_ease_out);
-    lv_anim_set_exec_cb(&a_opa, anim_opa_set);
-    lv_anim_start(&a_opa);
-}
-
-
-/* ============================================================
- * BELL WOBBLE
- * ------------------------------------------------------------
- * Web-CSS-Aequivalent (Keyframes-Pattern):
- *   0-55%:    0deg
- *   60%:    -10deg
- *   65%:    +10deg
- *   70%:     -6deg
- *   75%:     +6deg
- *   80-100%: 0deg
+ * Pattern: 0 -> +10 -> 0 -> -10 -> 0 ueber UI_DUR_BELL_WOBBLE (1400ms).
+ * Jede Schwenkphase 350ms (zusammen 700ms hin und 700ms her).
  *
- * ease-in-out, 2400ms, infinite.
+ * Pivot wird in ui_anim_bell_wobble auf TOP-CENTER gesetzt (Glocke
+ * haengt oben, schwingt unten - kein "Wackeln um den Bauch").
  *
- * LVGL hat kein Multi-Keyframe-API, daher nutzen wir einen
- * Anim-Callback der die Keyframes selbst interpoliert.
- *
- * LVGL Rotation-Units: 1/10 Grad. -10deg = -100 Units.
+ * LVGL Rotation-Units: 1/10 Grad. +10 deg = +100 Units.
  * ============================================================ */
 
 /* Lookup-Table fuer Wobble-Pattern.
@@ -148,14 +97,11 @@ typedef struct {
 } wobble_kf_t;
 
 static const wobble_kf_t wobble_keyframes[] = {
-    {   0,    0 },
-    { 550,    0 },
-    { 600, -100 },
-    { 650,  100 },
-    { 700,  -60 },
-    { 750,   60 },
-    { 800,    0 },
-    {1000,    0 },
+    {    0,    0 },
+    {  250,  100 },   /* +10 deg rechts */
+    {  500,    0 },
+    {  750, -100 },   /* -10 deg links */
+    { 1000,    0 },
 };
 
 #define WOBBLE_KF_COUNT (sizeof(wobble_keyframes) / sizeof(wobble_keyframes[0]))
@@ -189,11 +135,14 @@ void ui_anim_bell_wobble(lv_obj_t *obj)
 {
     if (!obj) return;
 
-    /* Pivot zentriert fuer Rotation */
+    /* S4-09: Pivot oben-mittig - Glocke haengt oben am Aufhaengepunkt
+     * und schwingt unten herum. Mittig (LV_PCT(50)/LV_PCT(50)) sieht
+     * aus wie "Wackeln um den Bauch", nicht wie laeutendes Pendel. */
     lv_obj_set_style_transform_pivot_x(obj, LV_PCT(50), 0);
-    lv_obj_set_style_transform_pivot_y(obj, LV_PCT(50), 0);
+    lv_obj_set_style_transform_pivot_y(obj, LV_PCT(0), 0);
 
-    /* Animator laeuft 0->1000 in 2400ms, loop infinite */
+    /* Animator 0->1000 in UI_DUR_BELL_WOBBLE (1400ms), loop infinite.
+     * Path linear weil das Keyframe-Lookup selbst die Sinus-Form macht. */
     lv_anim_t a;
     lv_anim_init(&a);
     lv_anim_set_var(&a, obj);
@@ -201,7 +150,7 @@ void ui_anim_bell_wobble(lv_obj_t *obj)
     lv_anim_set_duration(&a, UI_DUR_BELL_WOBBLE);
     lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
     lv_anim_set_repeat_delay(&a, 0);
-    lv_anim_set_path_cb(&a, lv_anim_path_linear);  /* Keyframe-Lookup macht das Easing */
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
     lv_anim_set_exec_cb(&a, anim_wobble_set);
     lv_anim_start(&a);
 }

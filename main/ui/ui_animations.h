@@ -1,27 +1,25 @@
 /*
  * ui_animations.h - KOENIGSLIGA Animation-Helper fuer LVGL
  *
- * ESP-Saison 2 Tag 3+
+ * ESP-Saison 2 Tag 3+ (S4-09: bell-pulse weggefallen, wobble auf
+ * kontinuierliches Pendel umgestellt).
  *
- * Bietet die drei Web-Viewer-Animationen als LVGL-Helper:
+ * Bietet die Web-Viewer-Animationen als LVGL-Helper:
  *
- *   ui_anim_breathe    breathing dot im Stream-Hint
- *                      2400ms ease-in-out, opacity 0.45 <-> 1.0
- *                      und scale 1.0 <-> 1.25
+ *   ui_anim_breathe     breathing dot im Stream-Hint
+ *                       2400ms ease-in-out, opacity 0.45 <-> 1.0
+ *                       und scale 1.0 <-> 1.25
  *
- *   ui_anim_bell_pulse expanding pulse-Ring im Ringing-Screen
- *                      2400ms ease-out, scale 0.6 -> 2.2, fade out
- *                      Drei Instanzen mit Delays 0/800/1600ms
- *
- *   ui_anim_bell_wobble Glocken-Wackeln im Ringing-Screen
- *                       2400ms ease-in-out, rotate -10 -> 10 -> 0
- *                       Hauptsaechlich Rotation, kurzer Burst alle 2.4s
+ *   ui_anim_bell_wobble Pendel-Schwingen der Glocke im Ringing-Screen
+ *                       1400ms hin-und-her, +/-10 deg, ease-in-out
+ *                       Pivot oben-mittig (Glocke "haengt").
  *
  * HARDWARE-NUTZUNG (ESP32-P4):
- *   LVGL 9.2 nutzt PPA (Pixel Processing Accelerator) automatisch
- *   ueber den Espressif-LVGL-Port. Scale + Rotation laufen
- *   hardware-beschleunigt, 60fps mit minimalem CPU-Load.
- *   Alpha-Blending: hardware via DMA2D.
+ *   Die Stack-Konfig (CONFIG_LV_USE_PPA, CONFIG_LVGL_PORT_ENABLE_PPA)
+ *   sind in der aktuellen LVGL 9.2.2 + esp_lvgl_port 2.5.0-Kombination
+ *   nicht in der Draw-Pipeline aktiv (siehe S4-07/S4-08 Berichte).
+ *   Alle Render-Operationen laufen in Software. Deshalb in S4-09 die
+ *   teuren Effekte (Soft-Shadow + Pulse-Scale-Rings) entfernt.
  */
 
 #pragma once
@@ -47,37 +45,13 @@ extern "C" {
 void ui_anim_breathe(lv_obj_t *obj);
 
 /**
- * Startet die "expanding pulse ring"-Animation auf einem Objekt.
+ * Startet die "bell wobble" Pendel-Animation auf einem Objekt.
  *
- * Animiert kontinuierlich Scale (153 <-> 563, also 0.6x bis 2.2x)
- * und Opacity (230 -> 0). Loop forever mit Delay zwischen den
- * Iterationen.
+ * S4-09: kontinuierliches Pendel statt Burst-Pattern. Pivot wird
+ * intern auf top-center gesetzt (Aufhaengepunkt der Glocke). Rotation
+ * 0 -> +10 -> 0 -> -10 -> 0 in 1400ms, ease-in-out, infinite.
  *
- * Drei Aufrufe mit delay_ms 0, 800, 1600 erzeugen die drei
- * versetzten Ringe wie im Web-Viewer.
- *
- * @param obj       LVGL-Objekt (Kreis ohne Fill, nur Border)
- * @param delay_ms  Initial-Delay bevor die Animation startet (0/800/1600)
- */
-void ui_anim_bell_pulse(lv_obj_t *obj, uint32_t delay_ms);
-
-/**
- * Startet die "bell wobble"-Animation auf einem Objekt.
- *
- * Animiert Rotation in einem Pattern wie im CSS:
- *   0-55%:   0deg
- *   60%:    -10deg
- *   65%:    +10deg
- *   70%:     -6deg
- *   75%:     +6deg
- *   80-100%: 0deg
- *
- * Loop forever, 2400ms pro Cycle.
- *
- * Damit Rotation funktioniert: das Objekt braucht lv_obj_set_style_transform_pivot
- * im Zentrum.
- *
- * @param obj  LVGL-Objekt (typisch die Bell-SVG im Hero)
+ * @param obj  LVGL-Objekt (typisch der Bell-Hero-Kreis mit der Lucide-Glocke).
  */
 void ui_anim_bell_wobble(lv_obj_t *obj);
 

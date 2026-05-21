@@ -235,8 +235,12 @@ extern "C" {
 
 /* Animation-Durations fuer die Spezial-Animationen */
 #define UI_DUR_BREATHE            2400     /* breathing dot im Stream-Hint */
-#define UI_DUR_BELL_PULSE         2400     /* expanding pulse rings */
-#define UI_DUR_BELL_WOBBLE        2400     /* Glocken-Wackeln im Ringing */
+/* UI_DUR_BELL_PULSE entfernt S4-09: Pulse-Ringe komplett aus dem Ringing-
+ * Screen geflogen (Soft-Shadow + 3-Ring-Scale in SW war Wuerger). */
+/* Glocken-Pendel: eine volle Hin-und-Her-Schwingung in 1400ms,
+ * jede "Seite" (0 -> +10 deg -> 0 oder 0 -> -10 deg -> 0) ~700ms.
+ * Briefing S4-09: "+/- 8-12 Grad, ~600-800ms hin/her". */
+#define UI_DUR_BELL_WOBBLE        1400     /* Glocken-Wackeln im Ringing */
 
 
 /* ============================================================
@@ -263,10 +267,12 @@ extern "C" {
  *   stream_h = SCREEN_H - 2*PAD - TOPBAR_H - 2*GAP - ACTIONS_H
  *            = 1280 - 28 - 64 - 20 - 96 = 1072 */
 
-/* Bell-Hero (Ringing-Screen) - 132 Web-Mobile * 2.1 ~= 277 (S4-01).
- * Pulse-Rings expandieren auf 2.2x; OVERFLOW_VISIBLE-Flag am Wrap
- * verhindert dass sie an der Wrap-Grenze abgeschnitten werden. */
-#define UI_BELL_HERO_SIZE         277
+/* Bell-Hero (Ringing-Screen).
+ * S4-01 hatte auf 277 hochgesetzt fuer Pulse-Ring-Reserve (2.2x-Expansion).
+ * S4-09: Pulse-Ringe + Glow weg (SW-Render zu teuer), Wrap braucht keinen
+ * Effekt-Raum mehr. 200px = Goldilocks zwischen CSS-Default 160 und dem
+ * S4-01-Bump 277 - gross genug fuers 800x1280-Display, schlank im Layout. */
+#define UI_BELL_HERO_SIZE         200
 #define UI_BELL_HERO_ICON         88     /* Lucide-88 Font-Groesse */
 
 /* Ring-Buttons (Ignorieren/Tuer/Annehmen) - 68 Web-Mobile * 2.1 ~= 143 (S4-01). */

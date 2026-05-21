@@ -125,8 +125,10 @@ CONFIG_LV_DRAW_SW_CIRCLE_CACHE_SIZE=16
 # Simple-Layer-Puffer 24K -> 64K. In LVGL 9.2.2 ist das Symbol
 # ohne "SW_"-Prefix; nach 9.5-Upgrade (Stage 1) ggf. renamen.
 CONFIG_LV_DRAW_LAYER_SIMPLE_BUF_SIZE=65536
-# Draw-Thread-Stack 8K -> 32K als Reserve fuer PPA-Pfade in Stage 2.
-CONFIG_LV_DRAW_THREAD_STACK_SIZE=32768
+# Draw-Thread-Stack 8K -> 12K. 32K war zu gross -> esp_hosted WLAN-Mempool
+# OOM, sdio_rx_get_buffer assert, Reboot. Interner RAM teilen WLAN+LVGL.
+# (S4-09 Lehre, siehe CLAUDE.md "Bekannte Issues" #7.)
+CONFIG_LV_DRAW_THREAD_STACK_SIZE=12288
 
 # === S4-08: LVGL Demos + Examples aus dem Build nehmen ===
 CONFIG_LV_BUILD_EXAMPLES=n
