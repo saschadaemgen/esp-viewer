@@ -80,7 +80,19 @@ static void build_bell_hero(lv_obj_t *parent)
 
     /* 3 .bell-pulse rings (border-only circles, accent-soft border).
      * Skalieren via ui_anim_bell_pulse 0.6x -> 2.2x, phasenversetzt
-     * je 800ms. Dank OVERFLOW_VISIBLE am Wrap nicht abgeschnitten. */
+     * je 800ms.
+     *
+     * S4-06 Pulse-Fix: transform_scale wird in LVGL 9 von
+     * lv_obj_calculate_ext_draw_size NICHT mitberechnet (nur shadow_,
+     * outline_, transform_width/_height). Folge: Render-Layer der Ring-
+     * Box bleibt 277x277, der 2.2x-Output wird beim Compositing in den
+     * 277x277-Rahmen geschnitten -> sichtbarer, abgerundeter Kasten um
+     * die Glocke (genau das was im Geraete-Log d=0 size=277x277,
+     * radius=CIRCLE, ovf_vis=0 erzeugt hat).
+     *
+     * Wir extenden ext_draw_size manuell via transform_width/_height auf
+     * 170px pro Seite (>166 = (2.2-1)/2 * 277). Der Layer ist dann
+     * 277+340 = 617x617, der Pulse atmet frei als Kreis nach aussen. */
     for (int i = 0; i < 3; i++) {
         lv_obj_t *ring = lv_obj_create(wrap);
         lv_obj_remove_style_all(ring);
@@ -93,6 +105,9 @@ static void build_bell_hero(lv_obj_t *parent)
         lv_obj_set_style_border_opa(ring, UI_OPA_ACCENT_SOFT, 0);
         lv_obj_set_style_border_width(ring, 2, 0);
         lv_obj_clear_flag(ring, LV_OBJ_FLAG_SCROLLABLE);
+        /* S4-06: ext_draw_size manuell fuer transform_scale 2.2x reservieren */
+        lv_obj_set_style_transform_width(ring, 170, 0);
+        lv_obj_set_style_transform_height(ring, 170, 0);
         ui_anim_bell_pulse(ring, i * 800);
     }
 
