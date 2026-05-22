@@ -41,19 +41,29 @@
 
 #include "driver/jpeg_decode.h"
 
-#include "services/device_token.h"
-
 static const char *TAG = "STREAM";
 
 /*
- * Stream-Endpoint laeuft jetzt ueber den unifix-Server-Proxy.
- * Profile-Resolution serverseitig via Bearer-Token-Lookup
- * (siehe Master-Chat S14-01/FIX01). go2rtc ist Loopback-only
- * auf dem RPi, kein direkter Zugriff mehr.
+ * Stream-Endpoint (S5-03):
+ *
+ * Direkt-Server (auth-frei) statt 9080-Proxy. Hintergrund: der RPi-
+ * Proxy laeuft fuer S5 noch nicht, die lebende Quelle ist der
+ * Windows-Desktop go2rtc auf .187:8555. Profil mjpeg_bal liefert
+ * 800x1280 @12fps q:v6 - matched genau die Canvas-Aufloesung, keine
+ * Skalierung noetig.
+ *
+ * KEIN Bearer-Header: dieser Endpoint hat keine Auth-Pruefung. Der
+ * device_token_get-Aufruf + Authorization-Zeile sind im HTTP-GET unten
+ * deshalb entfernt (S5-03). Wenn die Produktiv-Quelle spaeter wieder
+ * der Proxy wird, kommt die Auth zurueck.
+ *
+ * Server-COM-Marker ist serverseitig bereits gefixt (Stream-Chat
+ * commit 51188b0 mit -flags +bitexact), der ESP-Decoder bekommt
+ * saubere Frames - keine ESP-seitige Vorbehandlung noetig.
  */
-#define MJPEG_HOST      "192.168.1.42"
-#define MJPEG_PORT      9080
-#define MJPEG_PATH      "/esp/stream.mjpeg"
+#define MJPEG_HOST      "192.168.1.187"
+#define MJPEG_PORT      8555
+#define MJPEG_PATH      "/api/stream.mjpeg?src=mjpeg_bal"
 
 /* JPEG / canvas buffers */
 static uint8_t *s_jpeg_buf = NULL;
@@ -246,31 +256,21 @@ static void mjpeg_task(void *arg)
             continue;
         }
 
-        /* Load the device token (cached in NVS) for the Bearer header.
-         * Token is loaded fresh on every reconnect so we pick up any
-         * NVS update from a future provisioning rerun without restart. */
-        char token[DEVICE_TOKEN_MAX_LEN] = {0};
-        if (device_token_get(token, sizeof(token)) != ESP_OK) {
-            ESP_LOGE(TAG, "device_token_get failed, cannot auth stream");
-            close(sock);
-            vTaskDelay(pdMS_TO_TICKS(5000));
-            continue;
-        }
-
+        /* S5-03: KEIN Bearer-Header gegen den .187:8555-Direktserver.
+         * Der frueher hier sitzende device_token_get-Aufruf + die
+         * "Authorization: Bearer %s\r\n"-Zeile sind entfernt - der
+         * Endpoint hat keine Auth-Pruefung. Wenn die Produktiv-Quelle
+         * spaeter wieder der 9080-Proxy mit Bearer wird, kommt der
+         * Block zurueck. */
         char req[768];
         int req_len = snprintf(req, sizeof(req),
             "GET %s HTTP/1.1\r\n"
             "Host: %s:%d\r\n"
-            "Authorization: Bearer %s\r\n"
             "User-Agent: ESP32-P4-Display\r\n"
             "Accept: multipart/x-mixed-replace\r\n"
             "Connection: keep-alive\r\n"
             "\r\n",
-            MJPEG_PATH, MJPEG_HOST, MJPEG_PORT, token);
-
-        /* Wipe the token from stack immediately after building the
-         * request, defense in depth so it does not sit around in RAM. */
-        memset(token, 0, sizeof(token));
+            MJPEG_PATH, MJPEG_HOST, MJPEG_PORT);
 
         if (send(sock, req, req_len, 0) != req_len) {
             ESP_LOGE(TAG, "send failed");
