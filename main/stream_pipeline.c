@@ -44,8 +44,65 @@
 #include "bsp/esp-bsp.h"
 #include "bsp/display.h"
 
+#include "freertos/semphr.h"
+
+#include "esp_attr.h"
+#include "esp_cache.h"
 #include "esp_lcd_panel_ops.h"
+#include "esp_lcd_mipi_dsi.h"
 #include "driver/jpeg_decode.h"
+#include "hal/color_types.h"
+
+/*
+ * S5-07 forward-declarations: lokale Patches/private-APIs.
+ *
+ * lvgl_port_get_trans_sem: lokaler Patch in
+ *   managed_components/espressif__esp_lvgl_port/src/lvgl9/esp_lvgl_port_disp.c
+ *   (exposiert lvgl-port's internes trans_sem). Nicht VCS-tracked.
+ *
+ * esp_async_fbcpy_*: ESP-IDF DMA2D-FB-Copy-API, deklariert in
+ *   components/esp_lcd/priv_include/esp_async_fbcpy.h. priv_include
+ *   ist nicht von ausserhalb components/esp_lcd erreichbar; wir
+ *   replizieren die noetigen Typen + Funktions-Deklarationen hier.
+ *   Die Symbole selbst sind extern (nicht static), Linker findet sie.
+ *   Bei ESP-IDF-Update muss der Header-Vergleich gemacht werden.
+ *
+ * Pattern wie bei bsp_lcd_get_panel_handle (S4-10) - klar dokumentiert,
+ * lokal patch-frei (nur Forward-Decl), zentral hier in der einen Datei.
+ */
+extern SemaphoreHandle_t lvgl_port_get_trans_sem(lv_display_t *disp);
+
+typedef struct esp_async_fbcpy_context_t *esp_async_fbcpy_handle_t;
+typedef struct {
+    /* keine Felder im aktuellen IDF, aber API verlangt const-Pointer */
+} esp_async_fbcpy_config_t;
+typedef struct {
+    const void *src_buffer;
+    void *dst_buffer;
+    size_t src_buffer_size_x;
+    size_t src_buffer_size_y;
+    size_t dst_buffer_size_x;
+    size_t dst_buffer_size_y;
+    size_t src_offset_x;
+    size_t src_offset_y;
+    size_t dst_offset_x;
+    size_t dst_offset_y;
+    size_t copy_size_x;
+    size_t copy_size_y;
+    color_space_pixel_format_t pixel_format_unique_id;
+} esp_async_fbcpy_trans_desc_t;
+typedef struct {
+    /* keine Felder im aktuellen IDF */
+} esp_async_fbcpy_event_data_t;
+typedef bool (*esp_async_fbcpy_event_callback_t)(esp_async_fbcpy_handle_t mcp,
+                                                   esp_async_fbcpy_event_data_t *event_data,
+                                                   void *cb_args);
+extern esp_err_t esp_async_fbcpy_install(const esp_async_fbcpy_config_t *config,
+                                          esp_async_fbcpy_handle_t *mcp);
+extern esp_err_t esp_async_fbcpy(esp_async_fbcpy_handle_t mcp,
+                                  esp_async_fbcpy_trans_desc_t *transaction,
+                                  esp_async_fbcpy_event_callback_t memcpy_done_cb,
+                                  void *cb_args);
 
 static const char *TAG = "STREAM";
 
@@ -129,6 +186,131 @@ void stream_pipeline_set_visible(bool visible)
         ESP_LOGI(TAG, "stream visible: %d -> %d", s_stream_visible, visible);
         s_stream_visible = visible;
     }
+}
+
+/*
+ * S5-07 FB-Sync-Setup (Variante B2):
+ *
+ * Mit num_fbs=2 + AVOID_TEAR alterniert die Hardware-DMA zwischen
+ * fbs[0] und fbs[1] beim VSYNC. esp_lvgl_port nutzt diese beiden FBs
+ * als LVGL-Buffers (Zero-Copy + cur_fb_index-Update).
+ *
+ * Unser Stream muss in BEIDE FBs die Stream-Region schreiben, sonst
+ * zeigt der gerade nicht-aktualisierte FB einen alten Frame und beim
+ * Display-Rotate sieht der User Mehrfach-Hand (Geist-Symptom).
+ *
+ * Lösung: nach jedem Decode 2x esp_async_fbcpy (DMA2D-Copy aus
+ * s_stream_buf in fbs[0]+offset bzw. fbs[1]+offset). Beide Copies
+ * sequentiell um die DMA2D-Engine nicht ueberladen zu lassen.
+ *
+ *   s_fbcpy_handle    Eigener DMA2D-Channel (esp_async_fbcpy_install).
+ *   s_dpi_fbs[2]      FB-Pointer von esp_lcd_dpi_panel_get_frame_buffer.
+ *   s_copy_done_sem   Binary, gegeben im Done-Callback. mjpeg_task
+ *                     wartet pro Copy darauf.
+ *   s_lvgl_trans_sem  Cached lvgl-port-trans_sem (siehe S5-06).
+ *                     on_refresh_done-Wrapper triggert es weiter.
+ */
+static esp_async_fbcpy_handle_t s_fbcpy_handle    = NULL;
+static void                    *s_dpi_fbs[2]      = { NULL, NULL };
+static SemaphoreHandle_t        s_copy_done_sem   = NULL;
+static SemaphoreHandle_t        s_lvgl_trans_sem  = NULL;
+
+static IRAM_ATTR bool stream_copy_done_cb(esp_async_fbcpy_handle_t mcp,
+                                            esp_async_fbcpy_event_data_t *evt,
+                                            void *cb_args)
+{
+    (void)mcp; (void)evt; (void)cb_args;
+    BaseType_t hp_woken = pdFALSE;
+    if (s_copy_done_sem) {
+        xSemaphoreGiveFromISR(s_copy_done_sem, &hp_woken);
+    }
+    return (hp_woken == pdTRUE);
+}
+
+static IRAM_ATTR bool stream_vsync_fwd_cb(esp_lcd_panel_handle_t panel,
+                                           esp_lcd_dpi_panel_event_data_t *edata,
+                                           void *user_ctx)
+{
+    (void)panel; (void)edata; (void)user_ctx;
+    BaseType_t hp_woken = pdFALSE;
+    /* Forward zu esp_lvgl_port's internem trans_sem - sonst haengt
+     * lvgl_port_flush_callback im DSI/avoid_tearing-Pfad ewig. */
+    if (s_lvgl_trans_sem) {
+        xSemaphoreGiveFromISR(s_lvgl_trans_sem, &hp_woken);
+    }
+    return (hp_woken == pdTRUE);
+}
+
+esp_err_t stream_pipeline_install_fb_sync(void)
+{
+    if (s_fbcpy_handle) {
+        ESP_LOGW(TAG, "fb sync already installed");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    /* DMA2D-Channel installieren fuer unsere async_fbcpy-Calls. */
+    esp_async_fbcpy_config_t fbcpy_cfg = {0};
+    esp_err_t err = esp_async_fbcpy_install(&fbcpy_cfg, &s_fbcpy_handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_async_fbcpy_install failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    /* Panel-Handle aus BSP. */
+    esp_lcd_panel_handle_t panel = bsp_lcd_get_panel_handle();
+    if (!panel) {
+        ESP_LOGE(TAG, "panel handle NULL");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    /* Beide DPI-FB-Adressen holen. Mit num_fbs=2 in sdkconfig sind das
+     * exakt die zwei FBs die LVGL alterniert beschreibt + die die
+     * Hardware-DMA rotiert anzeigt. */
+    err = esp_lcd_dpi_panel_get_frame_buffer(panel, 2, &s_dpi_fbs[0], &s_dpi_fbs[1]);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "get_frame_buffer failed: %s", esp_err_to_name(err));
+        return err;
+    }
+    ESP_LOGI(TAG, "DPI FBs: fb0=%p, fb1=%p", s_dpi_fbs[0], s_dpi_fbs[1]);
+
+    /* lvgl-port's internes trans_sem cachen fuer den on_refresh_done-
+     * Forward (siehe S5-06 Begruendung). */
+    lv_display_t *disp = lv_disp_get_default();
+    if (!disp) {
+        ESP_LOGE(TAG, "lv_disp_get_default returned NULL");
+        return ESP_ERR_INVALID_STATE;
+    }
+    s_lvgl_trans_sem = lvgl_port_get_trans_sem(disp);
+    if (!s_lvgl_trans_sem) {
+        ESP_LOGW(TAG, "lvgl_port trans_sem is NULL - avoid_tearing not active?");
+    }
+
+    /* Copy-Done-Sema fuer den mjpeg_task. Binary - wir warten pro Copy
+     * darauf, kein Backlog. Initial NICHT gegeben, der erste Take wird
+     * nach dem ersten async_fbcpy ausgeloest. */
+    s_copy_done_sem = xSemaphoreCreateBinary();
+    if (!s_copy_done_sem) {
+        ESP_LOGE(TAG, "copy_done sema alloc failed");
+        return ESP_ERR_NO_MEM;
+    }
+
+    /* on_refresh_done-Forwarder registrieren. KEIN on_color_trans_done -
+     * wir nutzen esp_lcd_panel_draw_bitmap nicht mehr (statt dessen
+     * esp_async_fbcpy direkt), also brauchen wir den Color-Trans-Done
+     * nicht. Aber der on_refresh_done MUSS dranbleiben fuer LVGL. */
+    esp_lcd_dpi_panel_event_callbacks_t cbs = {
+        .on_color_trans_done = NULL,
+        .on_refresh_done     = stream_vsync_fwd_cb,
+    };
+    err = esp_lcd_dpi_panel_register_event_callbacks(panel, &cbs, disp);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "register panel callbacks failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    ESP_LOGI(TAG, "FB sync installed: fbcpy handle=%p, copy_done_sem + lvgl trans_sem forward",
+             s_fbcpy_handle);
+    return ESP_OK;
 }
 
 /*
@@ -468,16 +650,80 @@ static void mjpeg_task(void *arg)
                 continue;
             }
 
-            if (bsp_display_lock(100)) {
-                esp_err_t draw_ret = esp_lcd_panel_draw_bitmap(panel,
-                    0, STREAM_Y_TOP, STREAM_W, STREAM_Y_BOTTOM,
-                    s_stream_buf + STREAM_SRC_OFFSET);
-                bsp_display_unlock();
-                if (draw_ret != ESP_OK) {
-                    ESP_LOGW(TAG, "draw_bitmap: %s", esp_err_to_name(draw_ret));
+            /* S5-07 B2: Stream-Region in BEIDE DPI-FBs schreiben via
+             * esp_async_fbcpy. Damit ist egal welchen FB die Hardware-
+             * Rotation gerade zeigt - beide haben den aktuellen Frame.
+             *
+             * Source: s_stream_buf (800x1280 RGB565 decoded), wir kopieren
+             * die Stream-Region (zentrierter v-crop ab Row 104, 1072 Zeilen).
+             *
+             * Destination: jeweils s_dpi_fbs[0] / s_dpi_fbs[1] - direkt
+             * die Pointer aus esp_lcd_dpi_panel_get_frame_buffer.
+             * dst_offset_y = STREAM_Y_TOP=88 (in das Topbar/Actions-y
+             * NICHT geschrieben wird, LVGL-Domaene bleibt).
+             *
+             * bsp_display_lock um beide Copies + Cache-Sync, damit LVGL
+             * nicht gleichzeitig in den gleichen FB Zero-Copy-cache-msync
+             * macht. DMA-Async aber sequentiell - DMA2D-Engine kann nur
+             * eine Op zur Zeit. */
+            if (!s_fbcpy_handle || !s_dpi_fbs[0] || !s_dpi_fbs[1] || !s_copy_done_sem) {
+                ESP_LOGW(TAG, "fb sync not installed - skipping draw");
+            } else if (bsp_display_lock(100)) {
+                esp_async_fbcpy_trans_desc_t cfg = {
+                    .src_buffer = s_stream_buf,
+                    .src_buffer_size_x = STREAM_W,
+                    .src_buffer_size_y = STREAM_H,
+                    .src_offset_x = 0,
+                    .src_offset_y = STREAM_SRC_ROW0,        /* zentrierter v-crop */
+                    .dst_buffer_size_x = STREAM_W,           /* FB ist 800x1280 */
+                    .dst_buffer_size_y = STREAM_H,
+                    .dst_offset_x = 0,
+                    .dst_offset_y = STREAM_Y_TOP,            /* Stream-Region in FB */
+                    .copy_size_x = STREAM_W,
+                    .copy_size_y = STREAM_REGION_H,
+                    .pixel_format_unique_id = {
+                        .color_type_id = COLOR_TYPE_ID(COLOR_SPACE_RGB, COLOR_PIXEL_RGB565),
+                    },
+                };
+
+                /* Source-Cache nach Memory flush, damit DMA korrekte Daten
+                 * liest (CPU hat in s_stream_buf geschrieben, evtl noch
+                 * im L1/L2 Cache). */
+                esp_cache_msync(s_stream_buf, s_stream_buf_size,
+                                ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);
+
+                /* Copy in fb0 */
+                cfg.dst_buffer = s_dpi_fbs[0];
+                esp_err_t ce = esp_async_fbcpy(s_fbcpy_handle, &cfg,
+                                                stream_copy_done_cb, NULL);
+                if (ce == ESP_OK) {
+                    xSemaphoreTake(s_copy_done_sem, pdMS_TO_TICKS(100));
+                } else {
+                    ESP_LOGW(TAG, "fbcpy fb0: %s", esp_err_to_name(ce));
                 }
+
+                /* Copy in fb1 */
+                cfg.dst_buffer = s_dpi_fbs[1];
+                ce = esp_async_fbcpy(s_fbcpy_handle, &cfg,
+                                      stream_copy_done_cb, NULL);
+                if (ce == ESP_OK) {
+                    xSemaphoreTake(s_copy_done_sem, pdMS_TO_TICKS(100));
+                } else {
+                    ESP_LOGW(TAG, "fbcpy fb1: %s", esp_err_to_name(ce));
+                }
+
+                /* Destination-Cache invalidaten - damit Display-DMA die
+                 * frischen Daten sieht und nicht den Cache-Stand. */
+                size_t region_bytes = (size_t)STREAM_W * STREAM_REGION_H * STREAM_BPP;
+                size_t dst_offset_bytes = (size_t)STREAM_Y_TOP * STREAM_W * STREAM_BPP;
+                esp_cache_msync((uint8_t *)s_dpi_fbs[0] + dst_offset_bytes, region_bytes,
+                                ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);
+                esp_cache_msync((uint8_t *)s_dpi_fbs[1] + dst_offset_bytes, region_bytes,
+                                ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);
+
+                bsp_display_unlock();
             } else {
-                ESP_LOGW(TAG, "draw_bitmap skipped: display_lock(100) timeout");
+                ESP_LOGW(TAG, "fb-write skipped: display_lock(100) timeout");
             }
 
             frame_count++;

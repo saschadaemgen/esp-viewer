@@ -27,6 +27,31 @@ extern "C" {
 #endif
 
 /**
+ * S5-07 FB-Sync installieren.
+ *
+ * Muss aufgerufen werden NACH bsp_display_start_with_config (esp_lvgl_port
+ * hat dann seinen on_refresh_done-Callback registriert) und VOR
+ * stream_pipeline_start (mjpeg-Task braucht die FB-Pointer und das
+ * Copy-Done-Sema).
+ *
+ * Effekte:
+ *   - holt via esp_lcd_dpi_panel_get_frame_buffer(panel, 2, ...) die
+ *     beiden FB-Adressen die LVGL alterniert beschreibt
+ *   - install eigener esp_async_fbcpy-Handle fuer DMA2D-Copies in die
+ *     FBs (statt esp_lcd_panel_draw_bitmap das nur einen FB triffft)
+ *   - registriert on_refresh_done-Wrapper der das lvgl-port-trans_sem
+ *     weiterleitet (sonst haengt LVGL's flush_callback im
+ *     blockierenden xSemaphoreTake)
+ *
+ * Voraussetzungen: BSP_LCD_DPI_BUFFER_NUMS=2, AVOID_TEAR=y, DIRECT_MODE=y.
+ * Lokaler Patch in esp_lvgl_port (lvgl_port_get_trans_sem) bleibt
+ * Voraussetzung - siehe S5-05/S5-06.
+ *
+ * @return ESP_OK, sonst Fehlercode.
+ */
+esp_err_t stream_pipeline_install_fb_sync(void);
+
+/**
  * Set the visibility gate for the direct-FB render path.
  *
  *   true  -> mjpeg_task macht esp_lcd_panel_draw_bitmap nach jedem

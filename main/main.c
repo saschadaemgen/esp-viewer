@@ -1001,6 +1001,17 @@ static void on_got_ip(void)
                  esp_err_to_name(err));
     }
 
+    /* S5-07 B2: FB-Sync installieren BEVOR mjpeg-Task startet.
+     * Holt die 2 DPI-FB-Adressen, installiert eigenen DMA2D-Channel
+     * (esp_async_fbcpy), registriert on_refresh_done-Wrapper damit
+     * LVGL weiterhin sein trans_sema bekommt. Mit num_fbs=2 (sdkconfig)
+     * sind die zwei FBs identisch zu denen die LVGL nutzt. */
+    esp_err_t fbsync_err = stream_pipeline_install_fb_sync();
+    if (fbsync_err != ESP_OK) {
+        ESP_LOGW(TAG, "FB sync install failed: %s (continuing, expect ghost frames)",
+                 esp_err_to_name(fbsync_err));
+    }
+
     ESP_LOGI(TAG, "Starting stream pipeline ...");
     stream_pipeline_start(stream_slot);
 
