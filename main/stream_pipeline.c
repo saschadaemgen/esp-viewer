@@ -50,24 +50,23 @@
 static const char *TAG = "STREAM";
 
 /*
- * Stream-Endpoint (S5-03):
+ * Stream-Endpoint (S5-06):
  *
- * Direkt-Server (auth-frei) statt 9080-Proxy. Hintergrund: der RPi-
- * Proxy laeuft fuer S5 noch nicht, die lebende Quelle ist der
- * Windows-Desktop go2rtc auf .187:8555. Profil mjpeg_bal liefert
- * 800x1280 @12fps q:v6 - matched genau die Canvas-Aufloesung, keine
- * Skalierung noetig.
+ * Direkt-Server (auth-frei, Port 8555) statt 9080-carvilon-Proxy.
+ * Mess-Phase-Entscheidung aus S5-03 bleibt: ESP zieht vom Stream-
+ * Server direkt, nicht ueber den carvilon-Proxy.
  *
- * KEIN Bearer-Header: dieser Endpoint hat keine Auth-Pruefung. Der
- * device_token_get-Aufruf + Authorization-Zeile sind im HTTP-GET unten
- * deshalb entfernt (S5-03). Wenn die Produktiv-Quelle spaeter wieder
- * der Proxy wird, kommt die Auth zurueck.
+ * Seit S5-06: Stream laeuft auf dem RPi statt auf dem Windows-Desktop.
+ * .42 ist auch der carvilon-Host (Port 9080, SSE) - Stream-Server
+ * hoert separat auf 8555 auf demselben Host, beide Ports koexistieren.
+ * Profil mjpeg_bal liefert 800x1280 @12fps q:v6 - matched genau die
+ * Decoder-Aufloesung, keine Skalierung noetig.
  *
- * Server-COM-Marker ist serverseitig bereits gefixt (Stream-Chat
- * commit 51188b0 mit -flags +bitexact), der ESP-Decoder bekommt
- * saubere Frames - keine ESP-seitige Vorbehandlung noetig.
+ * KEIN Bearer-Header: dieser Endpoint hat keine Auth-Pruefung.
+ *
+ * Server-COM-Marker ist serverseitig bereits gefixt.
  */
-#define MJPEG_HOST      "192.168.1.187"
+#define MJPEG_HOST      "192.168.1.42"
 #define MJPEG_PORT      8555
 #define MJPEG_PATH      "/api/stream.mjpeg?src=mjpeg_bal"
 
