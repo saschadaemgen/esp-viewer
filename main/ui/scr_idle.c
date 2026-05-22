@@ -412,6 +412,60 @@ static lv_obj_t *build_actions(lv_obj_t *parent, const scr_idle_data_t *data)
 }
 
 
+/* ---------- Design-Rahmen ueber dem Direct-FB-Stream (S5-04 Teil B) ----------
+ *
+ * Direct-FB schreibt voll-breit (x=0..800, y=88..1160) ins Panel und
+ * uebermalt damit die 14px screen-bg-Pads links/rechts sowie die
+ * runden Ecken die das Canvas-Design (5675273) per stream_view-radius
+ * gratis hatte.
+ *
+ * Loesung: ein LVGL-Object an lv_layer_top mit nur LEFT/RIGHT-Border,
+ * 14px breit, anthrazit-opak, plus radius=UI_RADIUS_2XL. LVGL zeichnet
+ * die Border als 14px-vertikale-Streifen die an den Ecken zu radius=22
+ * runden - genau das visuelle Pattern des Original-Designs.
+ *
+ * Position absolut auf dem screen (lv_layer_top hat keine Padding-
+ * Kette des root). Size 800x1072 ueberspannt die Stream-Region. Mitte
+ * (bg_opa=TRANSP) laesst den Direct-FB-Stream durch.
+ *
+ * lv_layer_top liegt ueber allen scr_idle/scr_settings/scr_screensaver-
+ * Children und auch ueber dem ringing-Overlay - der Rahmen ist also in
+ * allen View-Modi sichtbar (im Screensaver/Settings ist die Stream-
+ * Region eh schwarz, der Rahmen schadet dort nichts).
+ *
+ * RISIKO: Direct-FB schreibt asynchron in den FB. Wenn LVGL die Border-
+ * Pixel nur 1x beim ersten Refresh malt und sie danach durch die
+ * laufenden Stream-Frames ueberschrieben werden, sind die Raender weg.
+ * Falls am Geraet Flackern an den Naehten sichtbar: melden, dann
+ * Fallback (x-Crop) statt wilde Schnellschuesse.
+ */
+static void build_design_frame_overlay(void)
+{
+    lv_obj_t *frame = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(frame);
+    lv_obj_set_size(frame, 800, 1072);   /* deckt Stream-Region voll-breit ab */
+    lv_obj_set_pos(frame, 0, 88);        /* y_top der Stream-Region */
+
+    /* Mitte transparent - Stream scheint durch. */
+    lv_obj_set_style_bg_opa(frame, LV_OPA_TRANSP, 0);
+
+    /* Border: nur links + rechts, 14px breit, anthrazit-opak, radius=22.
+     * Damit erzeugt LVGL zwei vertikale 14px-Streifen die an Ober- und
+     * Unterkante zu runden Ecken einknicken - das gibt die fehlenden
+     * Seitenraender + runden Ecken in einem Object zurueck. */
+    lv_obj_set_style_border_color(frame, UI_COLOR_BG, 0);
+    lv_obj_set_style_border_opa(frame, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(frame, UI_SCREEN_PAD, 0);   /* 14 */
+    lv_obj_set_style_border_side(frame,
+        LV_BORDER_SIDE_LEFT | LV_BORDER_SIDE_RIGHT, 0);
+    lv_obj_set_style_radius(frame, UI_RADIUS_2XL, 0);          /* 22 */
+
+    /* Touch-Events sollen durch zum stream_view (Toggle-Click). */
+    lv_obj_clear_flag(frame, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(frame, LV_OBJ_FLAG_SCROLLABLE);
+}
+
+
 /* ---------- Top-level build ---------- */
 lv_obj_t *scr_idle_build(lv_obj_t *screen, const scr_idle_data_t *data)
 {
@@ -436,6 +490,11 @@ lv_obj_t *scr_idle_build(lv_obj_t *screen, const scr_idle_data_t *data)
     s_refs.modes_container = modes_container;
     lv_obj_t *stream = build_stream(modes_container, data);
     build_actions(root, data);
+
+    /* S5-04 Teil B: Design-Rahmen auf lv_layer_top, damit der voll-breite
+     * Direct-FB-Stream nicht die anthrazit Seitenraender + runden Ecken
+     * uebermalt. Wird einmal beim Build aufgebaut, danach statisch. */
+    build_design_frame_overlay();
 
     /* Default-Mode beim Boot: Stream sichtbar, Screensaver wird in
      * register_screensaver_view() versteckt. */
