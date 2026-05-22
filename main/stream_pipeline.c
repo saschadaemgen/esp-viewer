@@ -3,19 +3,24 @@
  *
  * KOENIGSLIGA UniFi-Display
  *
+ * S5-04 Direct-FB-Pfad (lv_canvas final entfernt):
+ *   - JPEG decoder output RGB565 (matched DPI-FB-Format)
+ *   - 2 MB PSRAM-Buffer, 64B-aligned via jpeg_alloc_decoder_mem
+ *   - esp_lcd_panel_draw_bitmap schreibt direkt in die stream_view-
+ *     Region des Panel-FB. Pointer-Swap, kein Kopieren.
+ *   - Draw-Gate s_stream_visible: nur im Livestream-/Ringing-View
+ *     wird das Panel geschrieben. Decoder laeuft sonst weiter um den
+ *     TCP-Backlog leer zu halten.
+ *
+ * Hintergrund: der lv_canvas-Pfad (Saison 1-3 inkl. S5-03) war mit
+ * 800x1280 RGB-Buffer + lv_obj_invalidate pro Frame ein CPU-Wuerger
+ * (~49% lvglDraw, Bild ruckelig - Geraete-Messung S5-03). Direct-FB
+ * via DMA2D-Copy ist praktisch gratis (~10% CPU, 60 fps - S5-02).
+ *
  * v5: aggressive backlog skip. Nach jedem Frame: solange noch
  *     Bytes im TCP-Buffer warten und der naechste Frame schon
  *     komplett empfangbar ist, skippe ohne Decode. ESP entscheidet
  *     pro Frame neu, decodiert nur den AKTUELLSTEN Frame im Buffer.
- *
- * v3: pipeline migrated from RGB565 to RGB888 for the full
- *     24-bit color path (no more banding). Canvas grew from
- *     2MB to 3MB, JPEG decoder outputs RGB888 directly.
- *     Requires LV_COLOR_DEPTH=24 and BSP RGB888 in menuconfig.
- *
- * v2: canvas is now embedded inside a caller-provided parent
- * object (the .stream slot of the idle screen) instead of
- * clearing the whole screen.
  */
 
 #include "stream_pipeline.h"
@@ -39,6 +44,7 @@
 #include "bsp/esp-bsp.h"
 #include "bsp/display.h"
 
+#include "esp_lcd_panel_ops.h"
 #include "driver/jpeg_decode.h"
 
 static const char *TAG = "STREAM";
@@ -65,16 +71,66 @@ static const char *TAG = "STREAM";
 #define MJPEG_PORT      8555
 #define MJPEG_PATH      "/api/stream.mjpeg?src=mjpeg_bal"
 
-/* JPEG / canvas buffers */
+/*
+ * S5-04 Direct-FB Geometrie:
+ *
+ * Display Portrait 800 x 1280 (BSP_LCD_H_RES x BSP_LCD_V_RES).
+ *
+ * Stream-Region innerhalb des scr_idle-Layouts (siehe ui_tokens.h +
+ * main/ui/scr_idle.c):
+ *   y =    0..14    UI_SCREEN_PAD       (screen-bg, kein Stream)
+ *   y =   14..78    UI_TOPBAR_H=64      (LVGL Topbar, kein Stream)
+ *   y =   78..88    UI_SCREEN_GAP=10
+ *   y =   88..1160  stream_view 1072    <-- Stream-Region (1072 Zeilen)
+ *   y = 1160..1170  UI_SCREEN_GAP=10
+ *   y = 1170..1266  UI_ACTIONS_H=96     (LVGL Action-Bar, kein Stream)
+ *   y = 1266..1280  UI_SCREEN_PAD
+ *
+ * Horizontal: voll-breit 0..800 (kein x-Crop, kein Stride-Repack).
+ * Die 14px screen-bg-Pads links/rechts werden vom Stream uebermalt -
+ * Teil B (S5-04) legt ein LVGL-Frame-Overlay drueber das die anthrazit-
+ * Raender + runden Ecken zurueckholt.
+ *
+ * Source-Pointer-Offset fuer vertical-crop des 800x1280-Decoder-Buffers:
+ *   STREAM_SRC_ROW0 = (1280 - 1072) / 2 = 104  (zentrierter v-crop)
+ *   STREAM_SRC_OFFSET = 104 * 800 * 2 = 166400 Bytes
+ *
+ * Decoder schreibt das volle 800x1280 in s_stream_buf. draw_bitmap
+ * liest 800 * 1072 RGB565-Pixel linear ab (s_stream_buf + OFFSET).
+ */
+#define STREAM_W          800
+#define STREAM_H          1280
+#define STREAM_BPP        2   /* RGB565 = 2 Bytes/Pixel */
+#define STREAM_Y_TOP      88
+#define STREAM_Y_BOTTOM   1160
+#define STREAM_REGION_H   (STREAM_Y_BOTTOM - STREAM_Y_TOP)        /* 1072 */
+#define STREAM_SRC_ROW0   ((STREAM_H - STREAM_REGION_H) / 2)      /* 104 */
+#define STREAM_SRC_OFFSET (STREAM_SRC_ROW0 * STREAM_W * STREAM_BPP) /* 166400 */
+
+/* JPEG input + decode-output buffers */
 static uint8_t *s_jpeg_buf = NULL;
 static size_t s_jpeg_buf_capacity = 1024 * 1024;
 
-static uint8_t *s_canvas_buf = NULL;
-static size_t s_canvas_size = 0;
+static uint8_t *s_stream_buf = NULL;
+static size_t   s_stream_buf_size = 0;
 
 static jpeg_decoder_handle_t s_jpeg_engine = NULL;
-static lv_obj_t *s_video_canvas = NULL;
-static lv_obj_t *s_canvas_parent = NULL;
+
+/*
+ * Draw-Gate. Default false bei Boot (scr_loading aktiv, kein Stream
+ * sichtbar). Wird per stream_pipeline_set_visible von scr_idle /
+ * scr_ringing umgeschaltet sobald sich der View-State aendert.
+ * volatile damit der Compiler den Frame-Loop-Read nicht wegoptimiert.
+ */
+static volatile bool s_stream_visible = false;
+
+void stream_pipeline_set_visible(bool visible)
+{
+    if (s_stream_visible != visible) {
+        ESP_LOGI(TAG, "stream visible: %d -> %d", s_stream_visible, visible);
+        s_stream_visible = visible;
+    }
+}
 
 /*
  * Parse one MJPEG frame from the stream and write the JPEG payload
@@ -174,7 +230,22 @@ static int read_next_frame(int sock, uint8_t *recv_buf, size_t recv_buf_size,
 
 static void mjpeg_task(void *arg)
 {
-    ESP_LOGI(TAG, "MJPEG task starting");
+    (void)arg;
+    ESP_LOGI(TAG, "MJPEG task starting (S5-04 Direct-FB render path)");
+
+    /* Panel-Handle aus BSP (bsp_lcd_get_panel_handle wurde in S4-10
+     * lokal in common_components/esp32_p4_function_ev_board.c
+     * eingefuegt, NICHT VCS-tracked). Panel ist zum Task-Start
+     * verfuegbar weil mjpeg_task erst nach bsp_display_start_with_config
+     * in main.c gestartet wird. */
+    esp_lcd_panel_handle_t panel = bsp_lcd_get_panel_handle();
+    if (!panel) {
+        ESP_LOGE(TAG, "panel handle is NULL - BSP not initialized?");
+        vTaskDelete(NULL);
+        return;
+    }
+    ESP_LOGI(TAG, "got panel handle %p, stream region y=%d..%d (%d rows)",
+             panel, STREAM_Y_TOP, STREAM_Y_BOTTOM, STREAM_REGION_H);
 
     jpeg_decode_memory_alloc_cfg_t mc_in = {
         .buffer_direction = JPEG_DEC_ALLOC_INPUT_BUFFER,
@@ -184,18 +255,20 @@ static void mjpeg_task(void *arg)
     s_jpeg_buf_capacity = jpeg_actual;
     ESP_LOGI(TAG, "JPEG buffer: %d bytes", (int)jpeg_actual);
 
-    s_canvas_size = 800 * 1280 * 3;
-    size_t cl = 64;
-    s_canvas_size = (s_canvas_size + cl - 1) & ~(cl - 1);
+    /* RGB565 2 Bytes/Pixel * 800 * 1280 = 2,048,000 Bytes pro Frame.
+     * 64B-aligned aufrunden fuer DMA-Compatibility. */
+    s_stream_buf_size = STREAM_W * STREAM_H * STREAM_BPP;
+    const size_t align = 64;
+    s_stream_buf_size = (s_stream_buf_size + align - 1) & ~(align - 1);
 
     jpeg_decode_memory_alloc_cfg_t mc_out = {
         .buffer_direction = JPEG_DEC_ALLOC_OUTPUT_BUFFER,
     };
-    size_t cv_actual = 0;
-    s_canvas_buf = (uint8_t *)jpeg_alloc_decoder_mem(s_canvas_size, &mc_out, &cv_actual);
-    s_canvas_size = cv_actual;
-    memset(s_canvas_buf, 0, s_canvas_size);
-    ESP_LOGI(TAG, "Canvas: %d bytes", (int)cv_actual);
+    size_t sv_actual = 0;
+    s_stream_buf = (uint8_t *)jpeg_alloc_decoder_mem(s_stream_buf_size, &mc_out, &sv_actual);
+    s_stream_buf_size = sv_actual;
+    memset(s_stream_buf, 0, s_stream_buf_size);
+    ESP_LOGI(TAG, "Stream buffer (RGB565): %d bytes", (int)sv_actual);
 
     jpeg_decode_engine_cfg_t engine_cfg = {
         .timeout_ms = 5000,
@@ -204,21 +277,6 @@ static void mjpeg_task(void *arg)
         ESP_LOGE(TAG, "JPEG engine failed");
         vTaskDelete(NULL);
         return;
-    }
-
-    if (bsp_display_lock(100)) {
-        lv_obj_t *parent = s_canvas_parent ? s_canvas_parent : lv_screen_active();
-        s_video_canvas = lv_canvas_create(parent);
-        lv_canvas_set_buffer(s_video_canvas, s_canvas_buf, 800, 1280, LV_COLOR_FORMAT_RGB888);
-        lv_obj_set_size(s_video_canvas, lv_pct(100), lv_pct(100));
-        lv_obj_center(s_video_canvas);
-        /* Canvas ist nur Render-Target, keine Interaktion. CLICKABLE-Flag
-         * raus damit Touch-Events durchfallen auf den darunterliegenden
-         * stream_view (der einen on_stream_click_toggle-Handler hat).
-         * LVGL 9.x: LV_EVENT_CLICKED bubblet NICHT default, daher musste
-         * der Canvas die Klicks vorher schlucken. (S03-08 BUG-5-Fix.) */
-        lv_obj_clear_flag(s_video_canvas, LV_OBJ_FLAG_CLICKABLE);
-        bsp_display_unlock();
     }
 
     size_t recv_buf_size = 32 * 1024;
@@ -355,16 +413,18 @@ static void mjpeg_task(void *arg)
                 content_length = n;
             }
 
-            /* Decode the latest frame */
+            /* Decode the latest frame.
+             * Output RGB565 BGR -> matched DPI-FB-Format
+             * (CONFIG_BSP_LCD_COLOR_FORMAT_RGB565). */
             jpeg_decode_cfg_t dec_cfg = {
-                .output_format = JPEG_DECODE_OUT_FORMAT_RGB888,
+                .output_format = JPEG_DECODE_OUT_FORMAT_RGB565,
                 .rgb_order = JPEG_DEC_RGB_ELEMENT_ORDER_BGR,
             };
             uint32_t out_size = 0;
             int64_t t_dec_start = esp_timer_get_time();
             esp_err_t ret = jpeg_decoder_process(s_jpeg_engine, &dec_cfg,
                 s_jpeg_buf, content_length,
-                s_canvas_buf, s_canvas_size, &out_size);
+                s_stream_buf, s_stream_buf_size, &out_size);
             int64_t t_dec_end = esp_timer_get_time();
 
             if (ret != ESP_OK) {
@@ -375,9 +435,50 @@ static void mjpeg_task(void *arg)
             last_dec_ms = (int)((t_dec_end - t_dec_start) / 1000);
             last_jpeg_size = content_length;
 
-            if (bsp_display_lock(20)) {
-                lv_obj_invalidate(s_video_canvas);
+            /* S5-04 Direct-FB Render-Pfad mit View-Gate.
+             *
+             * Wenn der Stream nicht sichtbar sein soll (Screensaver,
+             * Settings, Loading): Draw skip - der Decoder lief gerade
+             * durch um TCP-Backlog leer zu halten, aber das Bild geht
+             * NICHT aufs Panel.
+             *
+             * Wenn sichtbar: esp_lcd_panel_draw_bitmap in die Stream-
+             * Region. x=0..800 voll-breit (LVGL-Frame-Overlay aus
+             * S5-04 Teil B holt die anthrazit Seitenraender + runde
+             * Ecken zurueck). y=88..1160 (Topbar + Action-Bar bleiben
+             * LVGL-exklusiv). Source-Offset zeigt auf row 104 des
+             * decoded 800x1280-Frames - zentrierter vertical-crop ohne
+             * memcpy, ohne Scaling.
+             *
+             * DMA2D-Copy im JD9365-Treiber (use_dma2d=true Default)
+             * macht den Pixel-Transfer ohne CPU-Last.
+             *
+             * bsp_display_lock = lvgl_port_lock - serialisiert mit
+             * LVGL-Flushes damit nicht zwei Tasks parallel ins esp_lcd-
+             * API gehen. */
+            if (!s_stream_visible) {
+                frame_count++;
+                int64_t now_us2 = esp_timer_get_time();
+                if (now_us2 - last_log_us > 1000000) {
+                    float secs = (now_us2 - start_us) / 1000000.0f;
+                    float fps = frame_count / secs;
+                    ESP_LOGI(TAG, "fps=%.1f  dec=%dms  frames=%d  skipped=%d  jpeg=%d KB  [HIDDEN]",
+                        fps, last_dec_ms, frame_count, skipped_count, last_jpeg_size / 1024);
+                    last_log_us = now_us2;
+                }
+                continue;
+            }
+
+            if (bsp_display_lock(100)) {
+                esp_err_t draw_ret = esp_lcd_panel_draw_bitmap(panel,
+                    0, STREAM_Y_TOP, STREAM_W, STREAM_Y_BOTTOM,
+                    s_stream_buf + STREAM_SRC_OFFSET);
                 bsp_display_unlock();
+                if (draw_ret != ESP_OK) {
+                    ESP_LOGW(TAG, "draw_bitmap: %s", esp_err_to_name(draw_ret));
+                }
+            } else {
+                ESP_LOGW(TAG, "draw_bitmap skipped: display_lock(100) timeout");
             }
 
             frame_count++;
@@ -400,46 +501,32 @@ reconnect:
 
 void stream_pipeline_start(lv_obj_t *parent)
 {
-    s_canvas_parent = parent;
+    /* S5-04: parent unbenutzt (kein lv_canvas mehr). Stream geht direkt
+     * in den DPI-FB. Signatur bleibt fuer Source-Compat mit main.c. */
+    (void)parent;
     xTaskCreatePinnedToCore(mjpeg_task, "mjpeg", 16384, NULL, 5, NULL, 0);
 }
 
 /* ============================================================
- * S4-03: Canvas-Reparent fuer das Klingel-Overlay
+ * S4-03 .. S5-03: lv_canvas-Reparent fuer das Klingel-Overlay.
  *
- * Single-Canvas-Architektur: der Stream rendert in genau EINEN
- * lv_canvas (s_video_canvas). Waehrend der Klingel ziehen wir ihn
- * temporaer in das Klingel-Overlay rein (Vollbild-Hintergrund), nach
- * dem Klingel-Ende zurueck zu seinem Original-Parent (stream_view).
+ * S5-04: NO-OPs. Der Canvas existiert nicht mehr - Stream rendert
+ * immer in seine Fenster-Region direkt im DPI-FB. Im Klingel-Modus
+ * (S5-04 Teil C) wird die Klingel-LVGL-UI direkt ueber den laufenden
+ * Stream gelegt, kein Reparenting noetig.
  *
- * Keine Buffer-Duplikate, keine Synchronisation - das gleiche Canvas-
- * Objekt zeigt einfach an einer anderen Stelle im LVGL-Baum.
+ * Die Aufrufer (scr_ringing show/hide) ueberleben hier ohne Anfassen.
+ * In S5-04 Teil C werden die Aufrufer entfernt, dann koennen die
+ * Funktionen ganz raus.
  * ============================================================ */
 
 lv_obj_t *stream_pipeline_attach_to_overlay(lv_obj_t *new_parent)
 {
-    if (!new_parent) return NULL;
-    if (!s_video_canvas) return NULL;
-
-    if (!bsp_display_lock(100)) {
-        ESP_LOGW(TAG, "attach_to_overlay: display_lock timeout");
-        return NULL;
-    }
-    lv_obj_set_parent(s_video_canvas, new_parent);
-    bsp_display_unlock();
-
-    return s_video_canvas;
+    (void)new_parent;
+    return NULL;
 }
 
 void stream_pipeline_detach_from_overlay(void)
 {
-    if (!s_video_canvas) return;
-    if (!s_canvas_parent) return;
-
-    if (!bsp_display_lock(100)) {
-        ESP_LOGW(TAG, "detach_from_overlay: display_lock timeout");
-        return;
-    }
-    lv_obj_set_parent(s_video_canvas, s_canvas_parent);
-    bsp_display_unlock();
+    /* no-op */
 }

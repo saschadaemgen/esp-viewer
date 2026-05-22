@@ -26,11 +26,12 @@
  */
 
 #include "scr_ringing.h"
+#include "scr_idle.h"          /* S5-04 Teil A: is_screensaver_mode for hide-restore */
 #include "ui_tokens.h"
 #include "ui_animations.h"
 #include "lucide_22.h"
 #include "lucide_88.h"
-#include "stream_pipeline.h"   /* S4-03: canvas attach/detach */
+#include "stream_pipeline.h"   /* S5-04: set_visible draw-gate */
 
 #include "lvgl.h"
 #include "esp_log.h"
@@ -419,12 +420,18 @@ void scr_ringing_show(void)
     }
     ESP_LOGI(TAG, "RING_SHOW");
 
-    /* Stream-Canvas ins Overlay reparenten und auf Index 1 stellen
-     * (ueber backdrop, unter scrim + content). */
+    /* S5-04 Teil A: attach_to_overlay ist seit Direct-FB No-Op und
+     * gibt NULL zurueck - kein lv_canvas mehr zum Reparenten. Aufruf
+     * bleibt als historischer Marker. Teil C entfernt ihn. */
     lv_obj_t *canvas = stream_pipeline_attach_to_overlay(s_overlay);
     if (canvas) {
         lv_obj_move_to_index(canvas, 1);
     }
+
+    /* Stream-Draw-Gate an, damit die Fenster-Region weiter aktualisiert
+     * wird (im aktuellen scr_ringing-Stand mit opaker backdrop ist der
+     * Stream durch das Overlay verdeckt - Teil C macht ihn sichtbar). */
+    stream_pipeline_set_visible(true);
 
     /* Top-Layer-Foreground (defensiv) + sichtbar + invalidieren. */
     lv_obj_move_foreground(s_overlay);
@@ -439,10 +446,14 @@ void scr_ringing_hide(void)
 
     ESP_LOGI(TAG, "RING_HIDE");
 
-    /* WICHTIG: Detach BEVOR HIDDEN gesetzt wird. Sonst waere der Canvas
-     * fuer einen Tick Kind eines versteckten Containers und der Idle-
-     * Stream zwischendrin schwarz. */
+    /* S5-04 Teil A: detach No-Op. Aufruf bleibt als historischer
+     * Marker. Teil C entfernt ihn. */
     stream_pipeline_detach_from_overlay();
+
+    /* Stream-Sichtbarkeit auf den Idle-Mode setzen. STREAM-Mode -> true
+     * (Bild weiter in Fenster), Screensaver -> false. Idempotent zum
+     * idle_mode_mgr-Restore der danach scr_idle_show_*_mode rufen kann. */
+    stream_pipeline_set_visible(!scr_idle_is_screensaver_mode());
 
     lv_obj_add_flag(s_overlay, LV_OBJ_FLAG_HIDDEN);
 

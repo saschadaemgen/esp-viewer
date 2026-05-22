@@ -3,17 +3,22 @@
  *
  * KOENIGSLIGA UniFi-Display
  *
- * Encapsulates the complete Saison-1 MJPEG pipeline:
+ * S5-04 Direct-FB-Pfad:
  *   - JPEG decoder engine (hardware, esp_driver_jpeg)
  *   - HTTP MJPEG receiver (multipart/x-mixed-replace parser)
- *   - LVGL canvas display
+ *   - RGB565-Decode (matched DPI-FB-Format)
+ *   - Direct write via esp_lcd_panel_draw_bitmap in die stream_view-
+ *     Region des DPI-Framebuffers (Pointer-Swap, kein Kopieren).
+ *   - KEIN lv_canvas-Compositing - LVGL beruehrt das Video nicht.
  *
- * Saison 2 update: canvas is created inside a caller-provided
- * parent object (the .stream slot of the idle screen) so the
- * video frames render inside the web-viewer-style frame.
+ * Hintergrund: der lv_canvas-Pfad (S1-S5-03) hatte ~49% lvglDraw-CPU
+ * + Bild ruckelig (Geraete-Messung S5-03). Direct-FB lief in S5-02 mit
+ * ~10% CPU + 60 fps - dieser Pfad ist seither der einzige produktive.
  */
 
 #pragma once
+
+#include <stdbool.h>
 
 #include "lvgl.h"
 
@@ -22,63 +27,63 @@ extern "C" {
 #endif
 
 /**
+ * Set the visibility gate for the direct-FB render path.
+ *
+ *   true  -> mjpeg_task macht esp_lcd_panel_draw_bitmap nach jedem
+ *            Decode (Stream-Pixel landen in der Stream-Region des
+ *            Panel-Framebuffers).
+ *   false -> Decode laeuft weiter (TCP-Backlog leer halten), aber der
+ *            Draw wird uebersprungen. Stream-Pixel landen NICHT im FB
+ *            wenn der Livestream-View nicht aktiv ist (Screensaver,
+ *            Settings).
+ *
+ * Aufrufer:
+ *   scr_idle_show_stream_mode      -> true  (nicht wenn Settings offen)
+ *   scr_idle_show_screensaver_mode -> false
+ *   scr_idle_show_settings         -> false
+ *   scr_idle_show_stream (close S) -> true wenn current_mode=STREAM
+ *   scr_ringing_show               -> true  (Stream bleibt im Klingel)
+ *   scr_ringing_hide               -> abhaengig vom Idle-Mode-Restore
+ *
+ * Thread-Safety: volatile bool, Aufruf aus jedem Task ok.
+ */
+void stream_pipeline_set_visible(bool visible);
+
+/**
  * Start the MJPEG stream pipeline.
  *
  * Preconditions:
  *   - WLAN connection up (IP_EVENT_STA_GOT_IP fired)
- *   - LVGL display initialised
+ *   - LVGL display initialised (bsp_lcd_get_panel_handle() != NULL)
  *
  * Behaviour:
- *   - Allocates JPEG input buffer (1 MB) and canvas output buffer
- *     (800x1280 RGB565)
+ *   - Allocates JPEG input buffer (1 MB) and decode output buffer
+ *     (800x1280 RGB565, ~2 MB)
  *   - Initialises hardware JPEG decoder engine
- *   - Creates an lv_canvas as child of `parent` filling its area
  *   - Spawns a FreeRTOS task on core 0 that fetches, decodes and
- *     blits frames to the canvas forever
+ *     writes frames directly into the DPI-Framebuffer
  *
- * @param parent  LVGL parent object the canvas is created in.
- *                Typically the .stream slot returned from
- *                scr_idle_build(). If NULL, lv_screen_active()
- *                is used as fallback (Saison-1 behaviour).
+ * @param parent  Unbenutzt seit S5-04 (war frueher der lv_canvas-
+ *                Parent). Caller kann NULL uebergeben. Signatur bleibt
+ *                fuer Source-Kompatibilitaet mit main.c.
  */
 void stream_pipeline_start(lv_obj_t *parent);
 
 /**
- * Temporaer den Stream-Canvas in einen anderen Eltern-Container
- * verschieben (Klingel-Overlay).
+ * No-Op seit S5-04 (Direct-FB-Pfad hat keinen lv_canvas mehr).
  *
- * Verwendung (S4-03): waehrend der Klingel-Anzeige wird der existierende
- * Single-Canvas ins fullscreen Klingel-Overlay reparented, damit der
- * Live-Stream als Vollbild-Hintergrund hinter Bell + Buttons sichtbar
- * wird. Beim Klingel-Ende wird er via stream_pipeline_detach_from_overlay
- * zurueckgesetzt.
+ * Frueher (S4-03 .. S5-03): reparented den lv_canvas zwischen
+ * stream_view und Klingel-Overlay. Signaturen bleiben vorerst stehen
+ * damit der bisherige scr_ringing-Code ohne Anfassen kompiliert.
+ * In S5-04 Teil C (Klingel-im-Livestream) werden die Aufrufer
+ * entfernt, dann koennen die Funktionen ganz raus.
  *
- * Caller-Verantwortung:
- * - Z-Order: der Canvas wird per lv_obj_set_parent als LETZTES Kind im
- *   neuen Parent angehaengt. Wer eine bestimmte Z-Position braucht,
- *   ruft lv_obj_move_to_index() auf dem Return-Pointer auf.
- * - Wenn der Pipeline-Task noch nicht oder nicht mehr lebt (kein Canvas
- *   erzeugt), gibt die Funktion NULL zurueck und macht nichts.
- *
- * Thread-Safety: nimmt intern bsp_display_lock(100). Recursive-Mutex
- * macht nested-locking von einem bereits gelockten Caller safe.
- *
- * @param new_parent  Neuer Parent-Container (z.B. das Ringing-Overlay).
- *                    NULL ist No-Op und gibt NULL zurueck.
- *
- * @return Pointer auf den Canvas (zum optionalen Z-Order-Positionieren)
- *         oder NULL bei Fehler / no-op.
+ * @return immer NULL.
  */
 lv_obj_t *stream_pipeline_attach_to_overlay(lv_obj_t *new_parent);
 
 /**
- * Den Stream-Canvas zurueck zu seinem Original-Parent (stream_view in
- * scr_idle) verschieben. KRITISCH: muss auf JEDEM Klingel-Schliess-Pfad
- * laufen (cancel / reject / accept), sonst bleibt der Canvas Kind eines
- * versteckten Overlays und der Idle-Stream wird nach der ersten Klingel
- * schwarz.
- *
- * Thread-Safety: nimmt intern bsp_display_lock(100).
+ * No-Op seit S5-04 (siehe stream_pipeline_attach_to_overlay).
  */
 void stream_pipeline_detach_from_overlay(void);
 

@@ -8,6 +8,7 @@
  */
 
 #include "scr_idle.h"
+#include "stream_pipeline.h"
 #include "ui_tokens.h"
 #include "ui_animations.h"
 #include "lucide_22.h"
@@ -256,99 +257,22 @@ static lv_obj_t *build_stream(lv_obj_t *parent, const scr_idle_data_t *data)
 
     s_refs.stream_view = stream;
 
-    lv_obj_t *hint = lv_obj_create(stream);
-    lv_obj_remove_style_all(hint);
-    lv_obj_set_size(hint, lv_pct(100), lv_pct(100));
-    lv_obj_set_style_bg_opa(hint, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(hint, 0, 0);
-    lv_obj_set_flex_flow(hint, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(hint, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_row(hint, UI_SPACE_6, 0);
-    lv_obj_clear_flag(hint, LV_OBJ_FLAG_SCROLLABLE);
-    /* Dekorations-Container - keine eigene Interaktion. CLICKABLE raus
-     * damit Tap auf Stream auf den stream-root durchfaellt (BUG-5). */
-    lv_obj_clear_flag(hint, LV_OBJ_FLAG_CLICKABLE);
-
-    lv_obj_t *orb = lv_obj_create(hint);
-    lv_obj_remove_style_all(orb);
-    lv_obj_set_size(orb, 56, 56);
-    lv_obj_set_style_radius(orb, UI_RADIUS_FULL, 0);
-    lv_obj_set_style_bg_color(orb, UI_COLOR_TEXT, 0);
-    lv_obj_set_style_bg_opa(orb, 10, 0);
-    lv_obj_set_style_border_color(orb, UI_COLOR_TEXT, 0);
-    lv_obj_set_style_border_opa(orb, 15, 0);
-    lv_obj_set_style_border_width(orb, 1, 0);
-    lv_obj_clear_flag(orb, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_clear_flag(orb, LV_OBJ_FLAG_CLICKABLE);
-
-    lv_obj_t *dot = lv_obj_create(orb);
-    lv_obj_remove_style_all(dot);
-    lv_obj_set_size(dot, 8, 8);
-    lv_obj_center(dot);
-    lv_obj_set_style_radius(dot, UI_RADIUS_FULL, 0);
-    lv_obj_set_style_bg_color(dot, UI_COLOR_TEXT, 0);
-    lv_obj_set_style_bg_opa(dot, 140, 0);
-    lv_obj_set_style_border_width(dot, 0, 0);
-    lv_obj_set_style_shadow_color(dot, UI_COLOR_TEXT, 0);
-    lv_obj_set_style_shadow_width(dot, 12, 0);
-    lv_obj_set_style_shadow_opa(dot, 65, 0);
-    lv_obj_clear_flag(dot, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_clear_flag(dot, LV_OBJ_FLAG_CLICKABLE);
-    ui_anim_breathe(dot);
-
-    lv_obj_t *txt = lv_obj_create(hint);
-    lv_obj_remove_style_all(txt);
-    lv_obj_set_size(txt, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-    lv_obj_set_style_bg_opa(txt, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(txt, 0, 0);
-    lv_obj_set_flex_flow(txt, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(txt, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_row(txt, 4, 0);
-    lv_obj_clear_flag(txt, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_clear_flag(txt, LV_OBJ_FLAG_CLICKABLE);
-
-    lv_obj_t *lbl1 = lv_label_create(txt);
-    lv_label_set_text(lbl1, "Bereit");
-    lv_obj_set_style_text_font(lbl1, UI_FONT_LG, 0);
-    lv_obj_set_style_text_color(lbl1, UI_COLOR_TEXT, 0);
-    lv_obj_set_style_text_opa(lbl1, UI_OPA_TEXT_SECONDARY, 0);
-
-    lv_obj_t *lbl2 = lv_label_create(txt);
-    lv_label_set_text(lbl2, "warte auf klingel");
-    lv_obj_set_style_text_font(lbl2, UI_FONT_SM, 0);
-    lv_obj_set_style_text_color(lbl2, UI_COLOR_TEXT, 0);
-    lv_obj_set_style_text_opa(lbl2, UI_OPA_TEXT_QUATERNARY, 0);
-    lv_obj_set_style_text_letter_space(lbl2, 1, 0);
-
-    lv_obj_t *meta = lv_obj_create(stream);
-    lv_obj_remove_style_all(meta);
-    lv_obj_set_size(meta, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-    lv_obj_set_style_bg_opa(meta, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(meta, 0, 0);
-    lv_obj_align(meta, LV_ALIGN_BOTTOM_LEFT, UI_SPACE_4, -UI_SPACE_4);
-    lv_obj_set_flex_flow(meta, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(meta, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_column(meta, UI_SPACE_2, 0);
-    lv_obj_clear_flag(meta, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_clear_flag(meta, LV_OBJ_FLAG_CLICKABLE);
-
-    lv_obj_t *meta_dot = lv_obj_create(meta);
-    lv_obj_remove_style_all(meta_dot);
-    lv_obj_set_size(meta_dot, 5, 5);
-    lv_obj_set_style_radius(meta_dot, UI_RADIUS_FULL, 0);
-    lv_obj_set_style_bg_color(meta_dot, UI_COLOR_TEXT, 0);
-    lv_obj_set_style_bg_opa(meta_dot, UI_OPA_TEXT_QUATERNARY, 0);
-    lv_obj_clear_flag(meta_dot, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_clear_flag(meta_dot, LV_OBJ_FLAG_CLICKABLE);
-
-    char meta_text[64];
-    snprintf(meta_text, sizeof(meta_text), "cam  %s", data->door_name);
-    lv_obj_t *meta_lbl = lv_label_create(meta);
-    lv_label_set_text(meta_lbl, meta_text);
-    lv_obj_set_style_text_font(meta_lbl, UI_FONT_XS, 0);
-    lv_obj_set_style_text_color(meta_lbl, UI_COLOR_TEXT, 0);
-    lv_obj_set_style_text_opa(meta_lbl, UI_OPA_TEXT_TERTIARY, 0);
-    s_refs.door_meta_label = meta_lbl;
+    /*
+     * S5-04: keine hint-Decoration (pulsierender dot, "Bereit/warte auf
+     * klingel"-Labels) und kein meta-Label mehr.
+     *
+     * Hintergrund: im Canvas-Pfad ueberdeckte der lv_canvas alle stream_view-
+     * Children. Im Direct-FB-Pfad gibt es keinen Canvas - LVGL-Children
+     * von stream_view (mit Per-Frame-Invalidate durch ui_anim_breathe)
+     * raceten mit dem mjpeg-Direct-FB-Schreiber und gaben Flimmern.
+     * stream_view bleibt jetzt ein leerer Container, sichtbar +
+     * clickable (toggle), bg=UI_COLOR_STREAM_BG opak fuer den ersten
+     * Frame bevor der Stream da ist.
+     *
+     * door_meta_label-Setter (scr_idle_set_door_name) hat schon einen
+     * NULL-Guard - bleibt jetzt immer NULL und der Setter ist No-Op.
+     */
+    (void)data;
 
     return stream;
 }
@@ -599,15 +523,28 @@ void scr_idle_register_screensaver_view(lv_obj_t *screensaver_view)
 
 void scr_idle_show_stream_mode(void)
 {
-    if (s_refs.current_mode == SCR_IDLE_MODE_STREAM) return;
+    /* UI-Sichtbarkeit nur tatsaechlich umschalten wenn der Modus
+     * sich aendert. Das set_visible-Gate dagegen MUSS auch im
+     * idempotent-Fall laufen (S5-04 Teil A, Lehre aus S5-02-FIX01
+     * Fehler 3): scr_idle_build setzt initial current_mode=STREAM,
+     * der Boot-Pfad in main.c ruft scr_idle_show_stream_mode() - der
+     * frueher mit early-return raus war BEVOR set_visible(true) lief.
+     * Konsequenz: Stream-Gate blieb auf false (Default), Bild kam erst
+     * nach manuellem Tap. */
+    if (s_refs.current_mode != SCR_IDLE_MODE_STREAM) {
+        if (s_refs.screensaver_view) {
+            lv_obj_add_flag(s_refs.screensaver_view, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (s_refs.stream_view) {
+            lv_obj_clear_flag(s_refs.stream_view, LV_OBJ_FLAG_HIDDEN);
+        }
+        s_refs.current_mode = SCR_IDLE_MODE_STREAM;
+    }
 
-    if (s_refs.screensaver_view) {
-        lv_obj_add_flag(s_refs.screensaver_view, LV_OBJ_FLAG_HIDDEN);
+    /* Draw-Gate: nicht zeichnen wenn Settings ueber dem Stream liegt. */
+    if (!s_refs.settings_shown) {
+        stream_pipeline_set_visible(true);
     }
-    if (s_refs.stream_view) {
-        lv_obj_clear_flag(s_refs.stream_view, LV_OBJ_FLAG_HIDDEN);
-    }
-    s_refs.current_mode = SCR_IDLE_MODE_STREAM;
 }
 
 void scr_idle_show_screensaver_mode(void)
@@ -620,6 +557,10 @@ void scr_idle_show_screensaver_mode(void)
     }
     lv_obj_clear_flag(s_refs.screensaver_view, LV_OBJ_FLAG_HIDDEN);
     s_refs.current_mode = SCR_IDLE_MODE_SCREENSAVER;
+
+    /* Kein Stream in der Fenster-Region waehrend Screensaver. Decoder
+     * laeuft weiter, nur der Draw faellt weg. */
+    stream_pipeline_set_visible(false);
 }
 
 void scr_idle_toggle_idle_mode(void)
@@ -663,6 +604,9 @@ void scr_idle_show_settings(void)
     lv_obj_move_foreground(s_refs.settings_view);
 
     s_refs.settings_shown = true;
+
+    /* Settings opak ueber Stream -> Stream-Draw aus. */
+    stream_pipeline_set_visible(false);
 }
 
 void scr_idle_show_stream(void)
@@ -676,6 +620,9 @@ void scr_idle_show_stream(void)
     lv_obj_add_flag(s_refs.settings_view, LV_OBJ_FLAG_HIDDEN);
 
     s_refs.settings_shown = false;
+
+    /* Settings zu - Draw-Gate wieder auf den aktuellen Idle-Mode setzen. */
+    stream_pipeline_set_visible(s_refs.current_mode == SCR_IDLE_MODE_STREAM);
 }
 
 bool scr_idle_is_settings_shown(void)
