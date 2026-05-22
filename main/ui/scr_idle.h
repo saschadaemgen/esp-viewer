@@ -182,6 +182,18 @@ void scr_idle_set_history_handler(lv_event_cb_t cb, void *user_data);
  */
 void scr_idle_set_unread_count(int count);
 
+/**
+ * S5-04 Teil C: Action-Bar (3 Idle-Buttons Mic/Tuer/Verlauf) ein-/
+ * ausblenden. Wird vom Klingel-Overlay genutzt um Platz fuer die
+ * grossen Klingel-Buttons (Ignorieren/Tuer/Annehmen) zu machen.
+ *
+ *   visible=false -> Action-Bar HIDDEN (Klingel-Buttons werden sichtbar)
+ *   visible=true  -> Action-Bar sichtbar (Klingel ist vorbei)
+ *
+ * Idempotent. No-op wenn scr_idle_build noch nicht gelaufen ist.
+ */
+void scr_idle_set_actions_visible(bool visible);
+
 #ifdef __cplusplus
 }
 #endif

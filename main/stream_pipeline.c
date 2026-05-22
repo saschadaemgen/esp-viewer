@@ -507,26 +507,15 @@ void stream_pipeline_start(lv_obj_t *parent)
     xTaskCreatePinnedToCore(mjpeg_task, "mjpeg", 16384, NULL, 5, NULL, 0);
 }
 
-/* ============================================================
- * S4-03 .. S5-03: lv_canvas-Reparent fuer das Klingel-Overlay.
+/*
+ * S4-03 .. S5-03 hatten hier stream_pipeline_attach_to_overlay und
+ * detach_from_overlay fuer das lv_canvas-Reparenting waehrend des
+ * Klingelns. Mit dem Direct-FB-Pfad (S5-04 Teil A) gibt es keinen
+ * lv_canvas mehr. Mit der Klingel-im-Livestream-Architektur (S5-04
+ * Teil C) gibt es auch keinen Reparent-Bedarf mehr - die Klingel-UI
+ * liegt direkt ueber dem laufenden Stream.
  *
- * S5-04: NO-OPs. Der Canvas existiert nicht mehr - Stream rendert
- * immer in seine Fenster-Region direkt im DPI-FB. Im Klingel-Modus
- * (S5-04 Teil C) wird die Klingel-LVGL-UI direkt ueber den laufenden
- * Stream gelegt, kein Reparenting noetig.
- *
- * Die Aufrufer (scr_ringing show/hide) ueberleben hier ohne Anfassen.
- * In S5-04 Teil C werden die Aufrufer entfernt, dann koennen die
- * Funktionen ganz raus.
- * ============================================================ */
-
-lv_obj_t *stream_pipeline_attach_to_overlay(lv_obj_t *new_parent)
-{
-    (void)new_parent;
-    return NULL;
-}
-
-void stream_pipeline_detach_from_overlay(void)
-{
-    /* no-op */
-}
+ * Die Funktionen sind in Teil C aus dem Header und der Quelle
+ * entfernt. Reflog hat die alten Implementations falls jemals
+ * gebraucht.
+ */

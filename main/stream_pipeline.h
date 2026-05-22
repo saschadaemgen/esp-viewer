@@ -69,24 +69,6 @@ void stream_pipeline_set_visible(bool visible);
  */
 void stream_pipeline_start(lv_obj_t *parent);
 
-/**
- * No-Op seit S5-04 (Direct-FB-Pfad hat keinen lv_canvas mehr).
- *
- * Frueher (S4-03 .. S5-03): reparented den lv_canvas zwischen
- * stream_view und Klingel-Overlay. Signaturen bleiben vorerst stehen
- * damit der bisherige scr_ringing-Code ohne Anfassen kompiliert.
- * In S5-04 Teil C (Klingel-im-Livestream) werden die Aufrufer
- * entfernt, dann koennen die Funktionen ganz raus.
- *
- * @return immer NULL.
- */
-lv_obj_t *stream_pipeline_attach_to_overlay(lv_obj_t *new_parent);
-
-/**
- * No-Op seit S5-04 (siehe stream_pipeline_attach_to_overlay).
- */
-void stream_pipeline_detach_from_overlay(void);
-
 #ifdef __cplusplus
 }
 #endif

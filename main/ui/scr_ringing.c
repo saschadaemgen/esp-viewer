@@ -237,35 +237,25 @@ lv_obj_t *scr_ringing_build(lv_obj_t *parent, const scr_ringing_data_t *data)
     lv_obj_add_flag(overlay, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
     s_overlay = overlay;
 
-    /* Schicht 1: opake Vollbild-Backdrop. JETZT echte 800x1280 weil
-     * overlay kein Padding mehr hat. Camera-Placeholder fuer S5+. */
-    lv_obj_t *backdrop = lv_obj_create(overlay);
-    lv_obj_remove_style_all(backdrop);
-    lv_obj_set_size(backdrop, lv_pct(100), lv_pct(100));
-    lv_obj_align(backdrop, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_set_style_bg_color(backdrop, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_bg_opa(backdrop, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(backdrop, 0, 0);
-    lv_obj_set_style_radius(backdrop, 0, 0);
-    lv_obj_clear_flag(backdrop, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_clear_flag(backdrop, LV_OBJ_FLAG_CLICKABLE);
-
-    /* Schicht 2: 35%-Scrim, ebenfalls full-bleed 800x1280. Solange
-     * backdrop schwarz-opak ist, ist der Scrim visuell redundant;
-     * darf trotzdem bleiben fuer wenn der echte Camera-Stream
-     * spaeter die Backdrop ersetzt. */
-    lv_obj_t *scrim = lv_obj_create(overlay);
-    lv_obj_remove_style_all(scrim);
-    lv_obj_set_size(scrim, lv_pct(100), lv_pct(100));
-    lv_obj_align(scrim, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_set_style_bg_color(scrim, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_bg_opa(scrim, 89, 0);  /* 0.35 */
-    lv_obj_set_style_border_width(scrim, 0, 0);
-    lv_obj_set_style_radius(scrim, 0, 0);
-    lv_obj_clear_flag(scrim, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_clear_flag(scrim, LV_OBJ_FLAG_CLICKABLE);
-
-    /* Schicht 3: content-Frame. Full-bleed Box, aber MIT dem alten
+    /*
+     * S5-04 Teil C: backdrop + scrim ENTFERNT.
+     *
+     * Im neuen Konzept laeuft der Direct-FB-Stream WAEHREND des
+     * Klingelns weiter, und das Klingel-UI (Bell + 3 grosse Buttons)
+     * erscheint DIREKT darueber. Vorherige Architektur (S4-10..S5-03):
+     *   Schicht 1 backdrop opak schwarz - hat den Stream komplett
+     *     verdeckt
+     *   Schicht 2 scrim 35% schwarz - Lesbarkeits-Abdunklung der
+     *     Klingel-UI
+     *   Schicht 3 content - Bell + Text + Buttons
+     * Beide Hintergrundschichten verdecken den jetzt sichtbaren Stream
+     * -> raus. content bleibt als einzige Schicht, transparent, mit
+     * den opaken Klingel-Elementen drin (die Buttons sind selbst opak,
+     * der Stream scheint dazwischen durch). Lesbarkeit von "Klingelt"-
+     * Text+DoorName ueber dem Stream wird im Geraete-Test bewertet -
+     * falls nicht lesbar genug, Folge-Commit mit Scrim wieder dazu.
+     *
+     * Schicht 3 content-Frame. Full-bleed Box mit dem alten
      * Master-Chat-Padding 90/24/24/56 so dass Bell+Text+Actions ihre
      * Abstaende behalten. Transparent. Flex-Column wie frueher der
      * overlay-Container. OVERFLOW_VISIBLE auch hier damit Pulse-Rings
@@ -420,18 +410,19 @@ void scr_ringing_show(void)
     }
     ESP_LOGI(TAG, "RING_SHOW");
 
-    /* S5-04 Teil A: attach_to_overlay ist seit Direct-FB No-Op und
-     * gibt NULL zurueck - kein lv_canvas mehr zum Reparenten. Aufruf
-     * bleibt als historischer Marker. Teil C entfernt ihn. */
-    lv_obj_t *canvas = stream_pipeline_attach_to_overlay(s_overlay);
-    if (canvas) {
-        lv_obj_move_to_index(canvas, 1);
-    }
-
-    /* Stream-Draw-Gate an, damit die Fenster-Region weiter aktualisiert
-     * wird (im aktuellen scr_ringing-Stand mit opaker backdrop ist der
-     * Stream durch das Overlay verdeckt - Teil C macht ihn sichtbar). */
+    /* S5-04 Teil C: Klingel-im-Livestream.
+     *
+     * Stream bleibt sichtbar (Direct-FB laeuft weiter). Bell + 3 Klingel-
+     * Buttons erscheinen direkt ueber dem Stream im transparenten
+     * Overlay-content. Die normale Action-Bar (3 Idle-Buttons) wird
+     * ausgeblendet damit die grossen Klingel-Buttons darunter Platz
+     * haben.
+     *
+     * KEIN Canvas-Reparenting mehr (das war S4-03..S5-03 fuer den
+     * Canvas-Pfad - im Direct-FB ist Reparenten irrelevant).
+     */
     stream_pipeline_set_visible(true);
+    scr_idle_set_actions_visible(false);
 
     /* Top-Layer-Foreground (defensiv) + sichtbar + invalidieren. */
     lv_obj_move_foreground(s_overlay);
@@ -446,13 +437,11 @@ void scr_ringing_hide(void)
 
     ESP_LOGI(TAG, "RING_HIDE");
 
-    /* S5-04 Teil A: detach No-Op. Aufruf bleibt als historischer
-     * Marker. Teil C entfernt ihn. */
-    stream_pipeline_detach_from_overlay();
-
-    /* Stream-Sichtbarkeit auf den Idle-Mode setzen. STREAM-Mode -> true
-     * (Bild weiter in Fenster), Screensaver -> false. Idempotent zum
-     * idle_mode_mgr-Restore der danach scr_idle_show_*_mode rufen kann. */
+    /* Klingel vorbei - Action-Bar wieder einblenden, Stream-Sichtbarkeit
+     * auf den aktuellen Idle-Mode setzen (STREAM -> true, Screensaver
+     * -> false). Idempotent zum idle_mode_mgr-Restore der danach
+     * scr_idle_show_*_mode rufen kann. */
+    scr_idle_set_actions_visible(true);
     stream_pipeline_set_visible(!scr_idle_is_screensaver_mode());
 
     lv_obj_add_flag(s_overlay, LV_OBJ_FLAG_HIDDEN);

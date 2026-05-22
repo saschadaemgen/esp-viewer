@@ -34,6 +34,7 @@ typedef struct {
     lv_obj_t *screensaver_view;
     lv_obj_t *settings_view;
     lv_obj_t *settings_btn;        /* the third ctrl-group icon */
+    lv_obj_t *actions_row;         /* S5-04 Teil C: action-bar fuer Show/Hide */
     lv_obj_t *hist_btn;            /* Verlauf-Button in der Action-Bar */
     lv_obj_t *hist_badge;          /* Unread-Count-Punkt am Verlauf-Button */
     bool      settings_shown;
@@ -408,6 +409,11 @@ static lv_obj_t *build_actions(lv_obj_t *parent, const scr_idle_data_t *data)
 
     #undef PLACE_ICON
 
+    /* S5-04 Teil C: persist actions-row reference for show/hide toggle
+     * (Klingel-im-Livestream blendet die normale Action-Bar aus damit
+     * die grossen Bell-Buttons darunter Platz haben). */
+    s_refs.actions_row = row;
+
     return row;
 }
 
@@ -717,5 +723,15 @@ void scr_idle_set_unread_count(int count)
         lv_obj_clear_flag(s_refs.hist_badge, LV_OBJ_FLAG_HIDDEN);
     } else {
         lv_obj_add_flag(s_refs.hist_badge, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+void scr_idle_set_actions_visible(bool visible)
+{
+    if (!s_refs.actions_row) return;
+    if (visible) {
+        lv_obj_clear_flag(s_refs.actions_row, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(s_refs.actions_row, LV_OBJ_FLAG_HIDDEN);
     }
 }
