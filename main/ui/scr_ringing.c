@@ -59,24 +59,22 @@ static lv_obj_t *s_btn_reject   = NULL;
 static lv_obj_t *s_btn_record   = NULL;
 
 
-/* ---------- Toolbar-Button-Builder (S5-17 refined) ----------
+/* ---------- Toolbar-Button-Builder (S5-18 Apple-flat) ----------
  *
  * Alle 5 Buttons teilen sich diese Helper-Funktion. Stil-Variabilitaet
- * (Groesse, Farbe, Gradient, Glow, Icon-Scale) per kring_btn_style_t.
+ * (Groesse, Farbe, Icon-Scale) per kring_btn_style_t.
  *
- * Refine S5-17: dezentere Schatten (width 12 statt 20, ofs_y 4 statt 8) -
- * weniger laut, mehr iPad-Stil. Optionaler bg-Gradient (Tuer-Button) ueber
- * grad_color != bg + grad_dir.
+ * S5-18 Refine: KEIN Gradient (Apple-flat). Sehr dezenter SCHWARZER
+ * Drop-Shadow fuer Tiefen-Effekt (width 6, ofs_y 2, opa 50), kein
+ * farbiger Glow-Halo mehr. Glas-Button (Ignorieren) ohne Shadow.
+ * Ruhig, hochwertig, ohne Bunt-Hexerei.
  */
 typedef struct {
     const char    *icon;            /* lucide_22 UTF-8 string, oder NULL */
     int32_t        size;            /* Aussen-Durchmesser */
     lv_color_t     bg;
     lv_opa_t       bg_opa;
-    lv_color_t     bg_grad;         /* Gradient-Zielfarbe (oder = bg fuer solid) */
-    lv_grad_dir_t  grad_dir;        /* LV_GRAD_DIR_NONE = solid */
-    lv_color_t     shadow;
-    lv_opa_t       shadow_opa;
+    bool           shadow;          /* dezenter schwarzer Drop, true=an */
     lv_color_t     icon_color;
     int32_t        icon_scale;      /* 256 = 1.0, lucide_22 base = 22 px */
 } kring_btn_style_t;
@@ -90,14 +88,14 @@ static lv_obj_t *build_kring_btn(lv_obj_t *parent, const kring_btn_style_t *styl
     lv_obj_set_style_border_width(btn, 0, 0);
     lv_obj_set_style_bg_color(btn, style->bg, 0);
     lv_obj_set_style_bg_opa(btn, style->bg_opa, 0);
-    if (style->grad_dir != LV_GRAD_DIR_NONE) {
-        lv_obj_set_style_bg_grad_color(btn, style->bg_grad, 0);
-        lv_obj_set_style_bg_grad_dir(btn, style->grad_dir, 0);
+    if (style->shadow) {
+        /* Apple-flat Drop: schwarz, sehr klein, sehr dezent. Kein
+         * farbiger Glow-Halo (S5-17-Look war zu bunt fuer Sasch). */
+        lv_obj_set_style_shadow_color(btn, lv_color_hex(0x000000), 0);
+        lv_obj_set_style_shadow_width(btn, 6, 0);
+        lv_obj_set_style_shadow_ofs_y(btn, 2, 0);
+        lv_obj_set_style_shadow_opa(btn, 50, 0);   /* ~20 % */
     }
-    lv_obj_set_style_shadow_color(btn, style->shadow, 0);
-    lv_obj_set_style_shadow_width(btn, 12, 0);
-    lv_obj_set_style_shadow_ofs_y(btn, 4, 0);
-    lv_obj_set_style_shadow_opa(btn, style->shadow_opa, 0);
     lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
 
@@ -154,7 +152,7 @@ lv_obj_t *scr_ringing_build(lv_obj_t *parent, const scr_ringing_data_t *data)
     lv_obj_remove_style_all(header);
     lv_obj_set_size(header, UI_SCREEN_W, UI_KLINGEL_HEADER_H);
     lv_obj_align(header, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_set_style_bg_color(header, UI_COLOR_BG_ELEV, 0);
+    lv_obj_set_style_bg_color(header, UI_COLOR_BG, 0);     /* S5-18 viel Schwarz */
     lv_obj_set_style_bg_opa(header, LV_OPA_COVER, 0);
     lv_obj_set_style_border_color(header, UI_COLOR_HAIRLINE, 0);
     lv_obj_set_style_border_opa(header, UI_OPA_HAIRLINE, 0);
@@ -184,7 +182,7 @@ lv_obj_t *scr_ringing_build(lv_obj_t *parent, const scr_ringing_data_t *data)
     lv_obj_remove_style_all(toolbar);
     lv_obj_set_size(toolbar, UI_SCREEN_W, UI_KLINGEL_TOOLBAR_H);
     lv_obj_align(toolbar, LV_ALIGN_BOTTOM_LEFT, 0, 0);
-    lv_obj_set_style_bg_color(toolbar, UI_COLOR_BG_ELEV, 0);
+    lv_obj_set_style_bg_color(toolbar, UI_COLOR_BG, 0);    /* S5-18 viel Schwarz */
     lv_obj_set_style_bg_opa(toolbar, LV_OPA_COVER, 0);
     lv_obj_set_style_border_color(toolbar, UI_COLOR_HAIRLINE, 0);
     lv_obj_set_style_border_opa(toolbar, UI_OPA_HAIRLINE, 0);
@@ -213,12 +211,12 @@ lv_obj_t *scr_ringing_build(lv_obj_t *parent, const scr_ringing_data_t *data)
     lv_obj_clear_flag(btn_row, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(btn_row, LV_OBJ_FLAG_CLICKABLE);
 
-    /* Child 1 (links aussen): Ignorieren / Stumm. */
+    /* Child 1 (links aussen): Ignorieren / Stumm. Glas/neutral, kein
+     * Shadow (Apple-flat). */
     kring_btn_style_t st_ignore = {
         .icon = ICON_BELL_OFF, .size = UI_KLINGEL_BTN_SM,
         .bg = UI_COLOR_SURFACE, .bg_opa = UI_OPA_SURFACE_3,
-        .bg_grad = UI_COLOR_SURFACE, .grad_dir = LV_GRAD_DIR_NONE,
-        .shadow = UI_COLOR_HAIRLINE, .shadow_opa = UI_OPA_HAIRLINE,
+        .shadow = false,
         .icon_color = UI_COLOR_TEXT,
         .icon_scale = 256,    /* 22 px native */
     };
@@ -239,45 +237,43 @@ lv_obj_t *scr_ringing_build(lv_obj_t *parent, const scr_ringing_data_t *data)
     lv_obj_clear_flag(center_group, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(center_group, LV_OBJ_FLAG_CLICKABLE);
 
-    /* Annehmen (links der Tuer, mittel 72, gruen, dezenter Glow). */
+    /* Annehmen (links der Tuer, mittel 72, gruen flat). */
     kring_btn_style_t st_accept = {
         .icon = ICON_PHONE, .size = UI_KLINGEL_BTN_MD,
         .bg = UI_COLOR_OK, .bg_opa = LV_OPA_COVER,
-        .bg_grad = UI_COLOR_OK, .grad_dir = LV_GRAD_DIR_NONE,
-        .shadow = UI_COLOR_OK, .shadow_opa = 80,
+        .shadow = true,
         .icon_color = UI_COLOR_TEXT,
         .icon_scale = 325,    /* 22 -> ~28 px */
     };
     s_btn_accept = build_kring_btn(center_group, &st_accept);
 
-    /* Tuer (mittig, gross 96, primary-blue mit Vertikal-Gradient). */
+    /* Tuer (mittig, gross 96, primary-blue FLACH - kein Gradient).
+     * Hauptaktion klar durch Groesse + Akzentfarbe, nicht durch Glow
+     * oder Verlauf (Apple-flat S5-18). */
     kring_btn_style_t st_door = {
         .icon = ICON_LOCK_OPEN, .size = UI_KLINGEL_BTN_LG,
-        .bg = UI_COLOR_ACCENT_LIGHT, .bg_opa = LV_OPA_COVER,
-        .bg_grad = UI_COLOR_ACCENT, .grad_dir = LV_GRAD_DIR_VER,
-        .shadow = UI_COLOR_ACCENT, .shadow_opa = 96,
+        .bg = UI_COLOR_ACCENT, .bg_opa = LV_OPA_COVER,
+        .shadow = true,
         .icon_color = UI_COLOR_TEXT_ON_ACCENT,
         .icon_scale = 415,    /* 22 -> ~36 px */
     };
     s_btn_door = build_kring_btn(center_group, &st_door);
 
-    /* Ablehnen (rechts der Tuer, mittel 72, rot, dezenter Glow). */
+    /* Ablehnen (rechts der Tuer, mittel 72, rot flat). */
     kring_btn_style_t st_reject = {
         .icon = ICON_X, .size = UI_KLINGEL_BTN_MD,
         .bg = UI_COLOR_DANGER, .bg_opa = LV_OPA_COVER,
-        .bg_grad = UI_COLOR_DANGER, .grad_dir = LV_GRAD_DIR_NONE,
-        .shadow = UI_COLOR_DANGER, .shadow_opa = 80,
+        .shadow = true,
         .icon_color = UI_COLOR_TEXT,
         .icon_scale = 325,
     };
     s_btn_reject = build_kring_btn(center_group, &st_reject);
 
-    /* Child 3 (rechts aussen): Record. */
+    /* Child 3 (rechts aussen): Record. Klein 56, rot flat, dezent. */
     kring_btn_style_t st_record = {
         .icon = ICON_CIRCLE, .size = UI_KLINGEL_BTN_SM,
         .bg = UI_COLOR_DANGER, .bg_opa = LV_OPA_COVER,
-        .bg_grad = UI_COLOR_DANGER, .grad_dir = LV_GRAD_DIR_NONE,
-        .shadow = UI_COLOR_DANGER, .shadow_opa = 64,
+        .shadow = true,
         .icon_color = UI_COLOR_TEXT,
         .icon_scale = 256,
     };
