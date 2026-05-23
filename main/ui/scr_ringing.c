@@ -1,352 +1,271 @@
 /*
- * scr_ringing.c - Ringing overlay, direct translation
+ * scr_ringing.c - Klingel-Screen (S5-16 Plan B: Toolbar unten, kein
+ * UI-Overlay ueber dem Stream).
  *
- * Template structure:
+ * Layout (waehrend Klingelns):
+ *   y =    0..1080   Stream Vollbreite (stream_pipeline fullscreen=true,
+ *                    KLINGEL_STREAM_H = STREAM_H - KLINGEL_TOOLBAR_H)
+ *   y = 1080..1280   Klingel-Toolbar (LVGL, im "sicheren" Bereich den
+ *                    der Stream nicht beschreibt - kein Doppel-Render
+ *                    wie beim alten PPA-Overlay-Versuch S5-08..S5-15)
  *
- *   .ringing (overlay)              radial gradient bg, padding 90/24/56
- *     .bell-hero-wrap               160x160 container
- *       .bell-pulse.p1              expanding ring, delay 0
- *       .bell-pulse.p2              expanding ring, delay 800
- *       .bell-pulse.p3              expanding ring, delay 1600
- *       .bell-hero                  solid circle, wobble animation, glow
- *         (bell svg, 80x80, drop-shadow accent-glow)
- *     .ring-text
- *       .ring-headline "Klingelt"   36px semibold
- *       .ring-sub      DoorName     17px regular 65% white
- *     .ring-actions (margin-top auto)
- *       .ring-col
- *         .ring-btn.is-danger       72x72 red, ignore icon
- *         .ring-label "Ignorieren"
- *       .ring-col
- *         .ring-btn.is-warn         72x72 orange, door icon (disabled)
- *         .ring-label "Tür auf"
- *       .ring-col
- *         .ring-btn.is-ok           72x72 green, phone icon (disabled)
- *         .ring-label "Annehmen"
+ * Toolbar (5 Buttons + 1-Zeile Status-Label, LTR):
+ *
+ *  Klingelt - Hauseingang
+ *  [Ignorieren] [Annehmen] [TUER (gross+pulse)] [Ablehnen] [Record]
+ *      72           104             144              104        72
+ *
+ * Hauptaktion (Tuer-Auf, mittig+gross) pulsiert dezent via lv_anim auf
+ * bg_opa - cheap LVGL-Render in der 144x144 Region, im sicheren
+ * Toolbar-Bereich (Stream beruehrt y<1080 nicht). Kein transform_*
+ * (das war der CPU-Killer S5-09).
+ *
+ * Stufe 1 verdraht Tuer/Annehmen/Ablehnen wie heute via main.c-Setters.
+ * Ignorieren + Record sind aktive Buttons mit Stub-Handlern - Funktion
+ * folgt in Stufe 2 (Mute = zurueck zu Idle, kein Reject-Signal) und
+ * Stufe 4 (Audio-Aufnahme).
  */
 
 #include "scr_ringing.h"
-#include "scr_idle.h"          /* S5-04 Teil A: is_screensaver_mode for hide-restore */
+#include "scr_idle.h"          /* is_screensaver_mode for hide-restore */
 #include "ui_tokens.h"
-#include "ui_animations.h"
 #include "lucide_22.h"
-#include "lucide_88.h"
-#include "stream_pipeline.h"   /* S5-04: set_visible draw-gate */
+#include "stream_pipeline.h"   /* set_visible + set_fullscreen */
 
 #include "lvgl.h"
 #include "esp_log.h"
+
+#include <stdio.h>
 
 static const char *TAG = "SCRRING";
 
 
 /*
  * Cached pointers, set during scr_ringing_build, consumed by
- * scr_ringing_set_*_handler setters und scr_ringing_show/hide.
- *
- * Single-instance: the overlay is built once in main.c on_got_ip.
- * If the overlay is ever rebuilt, the cache simply gets overwritten
- * and the previous overlay's setters become no-ops on the new one.
+ * scr_ringing_set_*_handler setters + scr_ringing_show/hide.
  */
-static lv_obj_t *s_overlay    = NULL;
-static lv_obj_t *s_reject_btn = NULL;
-static lv_obj_t *s_unlock_btn = NULL;
-static lv_obj_t *s_accept_btn = NULL;
-static lv_obj_t *s_sub_label  = NULL;
+static lv_obj_t *s_overlay      = NULL;
+static lv_obj_t *s_toolbar      = NULL;
+static lv_obj_t *s_status_label = NULL;
+static lv_obj_t *s_btn_ignore   = NULL;
+static lv_obj_t *s_btn_accept   = NULL;
+static lv_obj_t *s_btn_door     = NULL;
+static lv_obj_t *s_btn_reject   = NULL;
+static lv_obj_t *s_btn_record   = NULL;
 
 
-/* ---------- Bell hero ----------
+/* ---------- Toolbar-Button-Builder ----------
  *
- * S4-09: stark vereinfacht. Vorher: Wrap mit ext_draw_size-Reserve fuer
- * 3 Pulse-Ringe (Scale 2.2x) UND einen 80px-Soft-Shadow am Hero. Beide
- * Effekte wurden in Software pro Frame neu rasterisiert und drueckten
- * das UI auf ~1 frame / 4s.
- *
- * Jetzt: schlanker glassmorphic Kreis (cheap fill + 1px-border) mit
- * einer Lucide-Glocke drin. Kein Shadow, keine Pulse-Ringe. Wrap dient
- * nur noch als Layout-Wrapper damit der Hero seinen festen Platz in
- * der content-Flex-Spalte bekommt - keine Spezial-Flags noetig.
- *
- * S5-09: Wobble-Aufruf (ui_anim_bell_wobble) ENTFERNT. Die
- * lv_obj_set_style_transform_rotation-basierte Wackel-Animation hat
- * im Direct-FB-Setup (S5-04ff) pro Anim-Step ein Vollbild-Software-
- * Rasterisieren in BEIDE FBs ausgeloest (Geraete-Befund S5-08: 99%
- * CPU, 1 fps). PPA-Snapshot-Versuch (S5-08 Stufe 2) auch verworfen.
- * Glocke steht jetzt still. Optionaler performante Pulse/Glow kann
- * spaeter eingebaut werden (opa- oder color-Anim statt transform). */
-static void build_bell_hero(lv_obj_t *parent)
-{
-    lv_obj_t *wrap = lv_obj_create(parent);
-    lv_obj_remove_style_all(wrap);
-    lv_obj_set_size(wrap, UI_BELL_HERO_SIZE, UI_BELL_HERO_SIZE);
-    lv_obj_set_style_bg_opa(wrap, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(wrap, 0, 0);
-    lv_obj_clear_flag(wrap, LV_OBJ_FLAG_SCROLLABLE);
+ * Alle 5 Buttons teilen sich diese Helper-Funktion. Stil-Variabilitaet
+ * (Groesse, Farbe, Glow, Icon-Scale) per kring_btn_style_t.
+ */
+typedef struct {
+    const char *icon;       /* lucide_22 UTF-8 string, oder NULL */
+    int32_t     size;       /* Aussen-Durchmesser */
+    lv_color_t  bg;
+    lv_opa_t    bg_opa;
+    lv_color_t  shadow;
+    lv_opa_t    shadow_opa;
+    lv_color_t  icon_color;
+    int32_t     icon_scale; /* 256 = 1.0, e.g. 700 = 2.73x (22 -> ~60 px) */
+} kring_btn_style_t;
 
-    /* .bell-hero: glassmorphic Kreis. Web-CSS:
-     *   bg     rgba(255,255,255,0.08)   ~ 20/255 weiss-opa
-     *   border 1px rgba(255,255,255,0.18) ~ 46/255 weiss-opa */
-    lv_obj_t *hero = lv_obj_create(wrap);
-    lv_obj_remove_style_all(hero);
-    lv_obj_set_size(hero, UI_BELL_HERO_SIZE, UI_BELL_HERO_SIZE);
-    lv_obj_center(hero);
-    lv_obj_set_style_radius(hero, UI_RADIUS_FULL, 0);
-    lv_obj_set_style_bg_color(hero, UI_COLOR_TEXT, 0);
-    lv_obj_set_style_bg_opa(hero, 20, 0);   /* 0.08 */
-    lv_obj_set_style_border_color(hero, UI_COLOR_TEXT, 0);
-    lv_obj_set_style_border_opa(hero, 46, 0);  /* 0.18 */
-    lv_obj_set_style_border_width(hero, 1, 0);
-    lv_obj_clear_flag(hero, LV_OBJ_FLAG_SCROLLABLE);
-
-    /* Bell icon - Lucide ICON_BELL bei UI_BELL_HERO_ICON (88px). Im 200er
-     * Kreis sitzt das Icon mittig (lv_obj_center relativ zum hero, NICHT
-     * zum wrap - briefing-explicit). */
-    lv_obj_t *icon = lv_label_create(hero);
-    lv_label_set_text(icon, ICON_BELL);
-    lv_obj_set_style_text_font(icon, &lucide_88, 0);
-    lv_obj_set_style_text_color(icon, UI_COLOR_TEXT, 0);
-    lv_obj_center(icon);
-
-    /* S5-09: KEIN ui_anim_bell_wobble(hero). Siehe Header-Block. */
-}
-
-
-/* ---------- Ring action button ---------- */
-typedef enum {
-    RING_DANGER,   /* red - Ignorieren */
-    RING_WARN,     /* orange - Tuer auf */
-    RING_OK,       /* green - Annehmen */
-} ring_btn_kind_t;
-
-static lv_obj_t *build_ring_btn(lv_obj_t *parent, const char *symbol,
-                                ring_btn_kind_t kind, bool disabled)
+static lv_obj_t *build_kring_btn(lv_obj_t *parent, const kring_btn_style_t *style)
 {
     lv_obj_t *btn = lv_obj_create(parent);
     lv_obj_remove_style_all(btn);
-    lv_obj_set_size(btn, UI_RING_BTN_SIZE, UI_RING_BTN_SIZE);
+    lv_obj_set_size(btn, style->size, style->size);
     lv_obj_set_style_radius(btn, UI_RADIUS_FULL, 0);
     lv_obj_set_style_border_width(btn, 0, 0);
-    lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_color_t bg;
-    lv_color_t glow;
-    switch (kind) {
-    case RING_DANGER:
-        bg   = UI_COLOR_DANGER;
-        glow = UI_COLOR_DANGER;
-        break;
-    case RING_WARN:
-        bg   = UI_COLOR_WARN;
-        glow = UI_COLOR_WARN;
-        break;
-    case RING_OK:
-    default:
-        bg   = UI_COLOR_OK;
-        glow = UI_COLOR_OK;
-        break;
-    }
-
-    lv_obj_set_style_bg_color(btn, bg, 0);
-    lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
-    /* CSS shadow: inset 0 1px 0 rgba(255,255,255,0.30), 0 8px 20px <glow> */
-    lv_obj_set_style_shadow_color(btn, glow, 0);
+    lv_obj_set_style_bg_color(btn, style->bg, 0);
+    lv_obj_set_style_bg_opa(btn, style->bg_opa, 0);
+    lv_obj_set_style_shadow_color(btn, style->shadow, 0);
     lv_obj_set_style_shadow_width(btn, 20, 0);
     lv_obj_set_style_shadow_ofs_y(btn, 8, 0);
-    lv_obj_set_style_shadow_opa(btn, UI_OPA_ACCENT_GLOW, 0);
+    lv_obj_set_style_shadow_opa(btn, style->shadow_opa, 0);
+    lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
 
-    /* .ring-btn.is-disabled: opacity 0.42, filter saturate 0.8 */
-    if (disabled) {
-        lv_obj_set_style_opa(btn, 107, 0); /* 0.42 */
+    if (style->icon) {
+        lv_obj_t *icon = lv_label_create(btn);
+        lv_label_set_text(icon, style->icon);
+        lv_obj_set_style_text_font(icon, &lucide_22, 0);
+        lv_obj_set_style_text_color(icon, style->icon_color, 0);
+        lv_obj_center(icon);
+        if (style->icon_scale != 256) {
+            lv_obj_set_style_transform_scale(icon, style->icon_scale, 0);
+            lv_obj_set_style_transform_pivot_x(icon, 11, 0); /* lucide_22 = 22 px, pivot mittig */
+            lv_obj_set_style_transform_pivot_y(icon, 11, 0);
+        }
     }
-
-    /* Icon - Lucide font glyph at ~50px (lucide_22 base scaled 2.27x).
-     * Buttons sind UI_RING_BTN_SIZE x UI_RING_BTN_SIZE (143 nach S4-01).
-     * lucide_88 hat nur ICON_BELL als Glyphe, nicht X/lock/phone, deshalb
-     * skalieren wir lucide_22 hoch. Etwas weicher als ein nativer 50px-
-     * Font, aber kein zweites Font-Asset noetig. */
-    lv_obj_t *icon = lv_label_create(btn);
-    lv_label_set_text(icon, symbol);
-    lv_obj_set_style_text_font(icon, &lucide_22, 0);
-    lv_obj_set_style_text_color(icon, UI_COLOR_TEXT, 0);
-    lv_obj_center(icon);
-    lv_obj_set_style_transform_scale(icon, 580, 0);  /* 256=1.0 -> 580=2.27x (22->50px) */
-    lv_obj_set_style_transform_pivot_x(icon, 11, 0); /* half of 22 */
-    lv_obj_set_style_transform_pivot_y(icon, 11, 0);
 
     return btn;
 }
 
 
-/* ---------- .ring-col (button + label) ----------
+/* ---------- Tuer-Button Puls-Animation ----------
  *
- * Returns the button (not the col) so callers can cache it for
- * later event-handler wiring. The col is still constructed; only
- * the return value semantics changed.
+ * bg-opa zycelt 200..255 (78%..100%) jeweils 750 ms hin + zurueck =
+ * 1.5 s Cycle, infinite, ease-in-out. Repaintet nur die 144x144
+ * Tuer-Button-Region im sicheren Toolbar-Bereich (y>=1080, vom Stream
+ * nicht beruehrt). Subtiler "atmender" Glow ohne Pixel-Transform - kein
+ * CPU-Killer wie das alte transform_rotation-Wackeln (S5-09).
  */
-static lv_obj_t *build_ring_col(lv_obj_t *parent, const char *symbol,
-                                ring_btn_kind_t kind, bool disabled,
-                                const char *label_text)
+static void door_pulse_exec_cb(void *var, int32_t v)
 {
-    lv_obj_t *col = lv_obj_create(parent);
-    lv_obj_remove_style_all(col);
-    lv_obj_set_size(col, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-    lv_obj_set_flex_grow(col, 1);
-    lv_obj_set_style_bg_opa(col, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(col, 0, 0);
-    lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(col, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_row(col, UI_SPACE_3, 0);
-    lv_obj_clear_flag(col, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_opa((lv_obj_t *)var, (lv_opa_t)v, 0);
+}
 
-    lv_obj_t *btn = build_ring_btn(col, symbol, kind, disabled);
-
-    /* .ring-label: 14px medium, rgba(255,255,255,0.85) */
-    lv_obj_t *lbl = lv_label_create(col);
-    lv_label_set_text(lbl, label_text);
-    lv_obj_set_style_text_font(lbl, UI_FONT_BASE, 0);
-    lv_obj_set_style_text_color(lbl, UI_COLOR_TEXT, 0);
-    lv_obj_set_style_text_opa(lbl, 217, 0); /* 0.85 */
-
-    return btn;
+static void start_door_pulse(lv_obj_t *door_btn)
+{
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, door_btn);
+    lv_anim_set_exec_cb(&a, door_pulse_exec_cb);
+    lv_anim_set_values(&a, 200, 255);
+    lv_anim_set_duration(&a, 750);
+    lv_anim_set_playback_duration(&a, 750);
+    lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
+    lv_anim_start(&a);
 }
 
 
 /* ---------- Top-level build ---------- */
 lv_obj_t *scr_ringing_build(lv_obj_t *parent, const scr_ringing_data_t *data)
 {
-    /* .ringing: Vollbild-Overlay auf dem LVGL-Top-Layer (S4-02b).
-     *
-     * Architektur:
-     *   parent (lv_layer_top()) - ueber allen Screens
-     *     overlay (transparent, pad_all=0, OVERFLOW_VISIBLE)
-     *       backdrop  full-bleed 800x1280 schwarz opak (Camera-Placeholder)
-     *       scrim     full-bleed 800x1280 schwarz 35%
-     *       content   full-bleed Frame mit 90/24/24/56 Padding +
-     *                 flex column fuer Bell-Hero / Text / Spacer / Actions
-     *
-     * Warum content separat:
-     * - In S4-01b lagen Padding-Werte (90/24/24/56) direkt am overlay.
-     *   Damit wurden backdrop/scrim per lv_pct(100) auf die overlay-
-     *   Content-Area gerechnet (752x1134 statt 800x1280). Das ergab
-     *   einen 24-90 Padding-Rand rundherum, transparent, durch den
-     *   die Idle-Komposition (topbar, action-bar, screensaver) durch-
-     *   schien. Korrektur: pad_all=0 am overlay-Root, Padding kommt
-     *   auf einen dedizierten content-Container der ueber backdrop+
-     *   scrim liegt aber wieder selbst full-bleed-Frame ist. */
+    /* Overlay = Full-Screen-Container auf lv_layer_top. Transparent ueber
+     * dem ganzen Display. Nur die Toolbar unten ist opak; der Rest des
+     * Overlays gibt den Stream durch (kein Overlay-bg). */
     lv_obj_t *overlay = lv_obj_create(parent);
     lv_obj_remove_style_all(overlay);
     lv_obj_set_size(overlay, lv_pct(100), lv_pct(100));
     lv_obj_align(overlay, LV_ALIGN_TOP_LEFT, 0, 0);
     lv_obj_set_style_bg_opa(overlay, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(overlay, 0, 0);
-    lv_obj_set_style_pad_all(overlay, 0, 0);  /* WICHTIG S4-02b */
+    lv_obj_set_style_pad_all(overlay, 0, 0);
     lv_obj_clear_flag(overlay, LV_OBJ_FLAG_SCROLLABLE);
-    /* OVERFLOW_VISIBLE: pulse rings duerfen ueber overlay-Bounds
-     * hinaus rendern, falls Bell-Hero-Wrap an der Kante sitzt. */
-    lv_obj_add_flag(overlay, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
+    lv_obj_clear_flag(overlay, LV_OBJ_FLAG_CLICKABLE);
     s_overlay = overlay;
 
-    /*
-     * S5-04 Teil C: backdrop + scrim ENTFERNT.
-     *
-     * Im neuen Konzept laeuft der Direct-FB-Stream WAEHREND des
-     * Klingelns weiter, und das Klingel-UI (Bell + 3 grosse Buttons)
-     * erscheint DIREKT darueber. Vorherige Architektur (S4-10..S5-03):
-     *   Schicht 1 backdrop opak schwarz - hat den Stream komplett
-     *     verdeckt
-     *   Schicht 2 scrim 35% schwarz - Lesbarkeits-Abdunklung der
-     *     Klingel-UI
-     *   Schicht 3 content - Bell + Text + Buttons
-     * Beide Hintergrundschichten verdecken den jetzt sichtbaren Stream
-     * -> raus. content bleibt als einzige Schicht, transparent, mit
-     * den opaken Klingel-Elementen drin (die Buttons sind selbst opak,
-     * der Stream scheint dazwischen durch). Lesbarkeit von "Klingelt"-
-     * Text+DoorName ueber dem Stream wird im Geraete-Test bewertet -
-     * falls nicht lesbar genug, Folge-Commit mit Scrim wieder dazu.
-     *
-     * Schicht 3 content-Frame. Full-bleed Box mit dem alten
-     * Master-Chat-Padding 90/24/24/56 so dass Bell+Text+Actions ihre
-     * Abstaende behalten. Transparent. Flex-Column wie frueher der
-     * overlay-Container. OVERFLOW_VISIBLE auch hier damit Pulse-Rings
-     * die Content-Bounds nach aussen sprengen koennen. */
-    lv_obj_t *content = lv_obj_create(overlay);
-    lv_obj_remove_style_all(content);
-    lv_obj_set_size(content, lv_pct(100), lv_pct(100));
-    lv_obj_align(content, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_set_style_bg_opa(content, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(content, 0, 0);
-    /* CSS padding: 90px 24px 56px - top large, sides 24, bottom 56 */
-    lv_obj_set_style_pad_top(content, 90, 0);
-    lv_obj_set_style_pad_left(content, UI_SPACE_7, 0);
-    lv_obj_set_style_pad_right(content, UI_SPACE_7, 0);
-    lv_obj_set_style_pad_bottom(content, 56, 0);
-    lv_obj_set_flex_flow(content, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(content, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_clear_flag(content, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_clear_flag(content, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_flag(content, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
+    /* Toolbar bottom 200 px. Opaker dunkler Hintergrund (anthrazit) mit
+     * subtiler Hairline-Border oben + abgerundeten oberen Ecken (iPad-
+     * Stil). clip_corner damit Buttons innerhalb der Toolbar nicht
+     * ueber die runden Ecken hinaus rendern. */
+    lv_obj_t *toolbar = lv_obj_create(overlay);
+    lv_obj_remove_style_all(toolbar);
+    lv_obj_set_size(toolbar, UI_SCREEN_W, UI_KLINGEL_TOOLBAR_H);
+    lv_obj_align(toolbar, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+    lv_obj_set_style_bg_color(toolbar, UI_COLOR_BG_ELEV, 0);
+    lv_obj_set_style_bg_opa(toolbar, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(toolbar, UI_COLOR_HAIRLINE, 0);
+    lv_obj_set_style_border_opa(toolbar, UI_OPA_HAIRLINE_STRONG, 0);
+    lv_obj_set_style_border_width(toolbar, 1, 0);
+    lv_obj_set_style_border_side(toolbar, LV_BORDER_SIDE_TOP, 0);
+    lv_obj_set_style_radius(toolbar, UI_RADIUS_2XL, 0);
+    lv_obj_set_style_clip_corner(toolbar, true, 0);
+    lv_obj_set_style_pad_top(toolbar, UI_SPACE_3, 0);
+    lv_obj_set_style_pad_bottom(toolbar, UI_SPACE_2, 0);
+    lv_obj_set_style_pad_hor(toolbar, UI_SPACE_5, 0);
+    lv_obj_set_flex_flow(toolbar, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(toolbar, LV_FLEX_ALIGN_START,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(toolbar, UI_SPACE_2, 0);
+    lv_obj_clear_flag(toolbar, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(toolbar, LV_OBJ_FLAG_CLICKABLE);
+    s_toolbar = toolbar;
 
-    /* Bell hero - im content-Flex */
-    build_bell_hero(content);
+    /* Status-Label "Klingelt   <DoorName>". UI_FONT_XL = 22 px Montserrat.
+     * Sekundaer-Text-Opa (62 %). Mittig (Flex-Container alignt center). */
+    lv_obj_t *status = lv_label_create(toolbar);
+    char buf[96];
+    snprintf(buf, sizeof(buf), "Klingelt   %s",
+             (data && data->door_name) ? data->door_name : "Hauseingang");
+    lv_label_set_text(status, buf);
+    lv_obj_set_style_text_font(status, UI_FONT_XL, 0);
+    lv_obj_set_style_text_color(status, UI_COLOR_TEXT, 0);
+    lv_obj_set_style_text_opa(status, UI_OPA_TEXT_SECONDARY, 0);
+    s_status_label = status;
 
-    /* .ring-text: text-align center, margin-top space-9 */
-    lv_obj_t *txt = lv_obj_create(content);
-    lv_obj_remove_style_all(txt);
-    lv_obj_set_size(txt, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-    lv_obj_set_style_bg_opa(txt, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(txt, 0, 0);
-    lv_obj_set_style_margin_top(txt, UI_SPACE_9, 0);
-    lv_obj_set_flex_flow(txt, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(txt, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_row(txt, UI_SPACE_2, 0);
-    lv_obj_clear_flag(txt, LV_OBJ_FLAG_SCROLLABLE);
+    /* Button-Row: flex row, space-evenly. Hoehe = max-Button-Hoehe (Tuer 144),
+     * kleinere zentrieren vertikal. */
+    lv_obj_t *btn_row = lv_obj_create(toolbar);
+    lv_obj_remove_style_all(btn_row);
+    lv_obj_set_size(btn_row, lv_pct(100), UI_KLINGEL_BTN_LG);
+    lv_obj_set_style_bg_opa(btn_row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(btn_row, 0, 0);
+    lv_obj_set_flex_flow(btn_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(btn_row, LV_FLEX_ALIGN_SPACE_EVENLY,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(btn_row, UI_SPACE_3, 0);
+    lv_obj_clear_flag(btn_row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(btn_row, LV_OBJ_FLAG_CLICKABLE);
 
-    /* .ring-headline: 36px semibold, color #fff, letter-spacing tight */
-    lv_obj_t *headline = lv_label_create(txt);
-    lv_label_set_text(headline, "Klingelt");
-    lv_obj_set_style_text_font(headline, UI_FONT_3XL, 0);
-    lv_obj_set_style_text_color(headline, UI_COLOR_TEXT, 0);
+    /* Button 1 LTR: Ignorieren (klein, grau/glass). Stub-Icon ICON_BELL
+     * - in Stufe 3 ersetzbar durch bell-off oder mute. */
+    kring_btn_style_t st_ignore = {
+        .icon = ICON_BELL, .size = UI_KLINGEL_BTN_SM,
+        .bg = UI_COLOR_SURFACE, .bg_opa = UI_OPA_SURFACE_3,
+        .shadow = UI_COLOR_HAIRLINE, .shadow_opa = UI_OPA_HAIRLINE_STRONG,
+        .icon_color = UI_COLOR_TEXT,
+        .icon_scale = 325,    /* 22 -> ~28 px */
+    };
+    s_btn_ignore = build_kring_btn(btn_row, &st_ignore);
 
-    /* .ring-sub: 17px regular, rgba(255,255,255,0.65) */
-    lv_obj_t *sub = lv_label_create(txt);
-    lv_label_set_text(sub, data->door_name);
-    lv_obj_set_style_text_font(sub, UI_FONT_LG, 0);
-    lv_obj_set_style_text_color(sub, UI_COLOR_TEXT, 0);
-    lv_obj_set_style_text_opa(sub, 166, 0); /* 0.65 */
-    s_sub_label = sub;
+    /* Button 2: Annehmen (mittel, gruen). */
+    kring_btn_style_t st_accept = {
+        .icon = ICON_PHONE, .size = UI_KLINGEL_BTN_MD,
+        .bg = UI_COLOR_OK, .bg_opa = LV_OPA_COVER,
+        .shadow = UI_COLOR_OK, .shadow_opa = UI_OPA_OK_GLOW,
+        .icon_color = UI_COLOR_TEXT,
+        .icon_scale = 465,    /* 22 -> ~40 px */
+    };
+    s_btn_accept = build_kring_btn(btn_row, &st_accept);
 
-    /* Spacer to push ring-actions to bottom (CSS: margin-top auto) */
-    lv_obj_t *spacer = lv_obj_create(content);
-    lv_obj_remove_style_all(spacer);
-    lv_obj_set_size(spacer, 1, 1);
-    lv_obj_set_flex_grow(spacer, 1);
-    lv_obj_set_style_bg_opa(spacer, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(spacer, 0, 0);
+    /* Button 3 (Mitte): Tuer-Oeffnen (gross, primary-blau, PULSIERT). */
+    kring_btn_style_t st_door = {
+        .icon = ICON_LOCK_OPEN, .size = UI_KLINGEL_BTN_LG,
+        .bg = UI_COLOR_ACCENT, .bg_opa = LV_OPA_COVER,
+        .shadow = UI_COLOR_ACCENT, .shadow_opa = UI_OPA_ACCENT_GLOW,
+        .icon_color = UI_COLOR_TEXT_ON_ACCENT,
+        .icon_scale = 700,    /* 22 -> ~60 px */
+    };
+    s_btn_door = build_kring_btn(btn_row, &st_door);
 
-    /* .ring-actions: flex row, space-between, gap 16, padding 16 */
-    lv_obj_t *actions = lv_obj_create(content);
-    lv_obj_remove_style_all(actions);
-    lv_obj_set_size(actions, lv_pct(100), LV_SIZE_CONTENT);
-    lv_obj_set_style_bg_opa(actions, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(actions, 0, 0);
-    lv_obj_set_style_pad_hor(actions, UI_SPACE_5, 0);
-    lv_obj_set_flex_flow(actions, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(actions, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
-    lv_obj_set_style_pad_column(actions, UI_SPACE_5, 0);
-    lv_obj_clear_flag(actions, LV_OBJ_FLAG_SCROLLABLE);
+    /* Button 4: Ablehnen (mittel, rot). */
+    kring_btn_style_t st_reject = {
+        .icon = ICON_X, .size = UI_KLINGEL_BTN_MD,
+        .bg = UI_COLOR_DANGER, .bg_opa = LV_OPA_COVER,
+        .shadow = UI_COLOR_DANGER, .shadow_opa = UI_OPA_DANGER_GLOW,
+        .icon_color = UI_COLOR_TEXT,
+        .icon_scale = 465,
+    };
+    s_btn_reject = build_kring_btn(btn_row, &st_reject);
 
-    /* 3 columns: Ignorieren / Tür auf / Annehmen.
-     * S4-01: Briefing nennt bell-off / key / phone. bell-off und key sind
-     * nicht in unserer aktuellen lucide_22-Font drin (Sasch regeneriert
-     * die Font separat, hier nicht touchen).
-     *   - Ignorieren: ICON_X (Kreuz) - vergleichbarer Reject-Marker
-     *   - Tuer auf:   ICON_LOCK_OPEN (lock-with-key-shape, semantisch
-     *                 naeher am Briefing's "key" als ICON_DOOR_OPEN
-     *                 und konsistent mit dem Idle-Action-Bar-Button)
-     *   - Annehmen:   ICON_PHONE - matched die Briefing-Spec
-     * Alle drei Buttons sind ab S4-01 funktional (kein 'disabled'). */
-    s_reject_btn = build_ring_col(actions, ICON_X,         RING_DANGER, false, "Ignorieren");
-    s_unlock_btn = build_ring_col(actions, ICON_LOCK_OPEN, RING_WARN,   false, "Tür auf");
-    s_accept_btn = build_ring_col(actions, ICON_PHONE,     RING_OK,     false, "Annehmen");
+    /* Button 5 LTR: Record (klein, rot). Lucide_22 hat keinen Record-Icon
+     * (Stufe 3 importiert ihn). Stub-Look: roter Button mit kleinem weissem
+     * Innen-Quadrat (klassischer Stop/Record-Look). */
+    kring_btn_style_t st_record = {
+        .icon = NULL, .size = UI_KLINGEL_BTN_SM,
+        .bg = UI_COLOR_DANGER, .bg_opa = LV_OPA_COVER,
+        .shadow = UI_COLOR_DANGER, .shadow_opa = UI_OPA_DANGER_GLOW,
+        .icon_color = UI_COLOR_TEXT,
+        .icon_scale = 256,
+    };
+    s_btn_record = build_kring_btn(btn_row, &st_record);
+    lv_obj_t *rec_dot = lv_obj_create(s_btn_record);
+    lv_obj_remove_style_all(rec_dot);
+    lv_obj_set_size(rec_dot, 22, 22);
+    lv_obj_set_style_radius(rec_dot, UI_RADIUS_FULL, 0);
+    lv_obj_set_style_bg_color(rec_dot, UI_COLOR_TEXT, 0);
+    lv_obj_set_style_bg_opa(rec_dot, LV_OPA_COVER, 0);
+    lv_obj_center(rec_dot);
+    lv_obj_clear_flag(rec_dot, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(rec_dot, LV_OBJ_FLAG_CLICKABLE);
+
+    /* Tuer-Puls-Anim starten (im sicheren Toolbar-Bereich, kein Stream-
+     * Konflikt). */
+    start_door_pulse(s_btn_door);
 
     return overlay;
 }
@@ -357,27 +276,18 @@ void scr_ringing_set_reject_handler(lv_obj_t *overlay,
                                     lv_event_cb_t cb,
                                     void *user_data)
 {
-    (void)overlay; /* reserved for future multi-overlay support */
-    if (!s_reject_btn || !cb) return;
-    lv_obj_add_event_cb(s_reject_btn, cb, LV_EVENT_CLICKED, user_data);
-    lv_obj_add_flag(s_reject_btn, LV_OBJ_FLAG_CLICKABLE);
+    (void)overlay;
+    if (!s_btn_reject || !cb) return;
+    lv_obj_add_event_cb(s_btn_reject, cb, LV_EVENT_CLICKED, user_data);
 }
 
 void scr_ringing_set_unlock_handler(lv_obj_t *overlay,
                                     lv_event_cb_t cb,
                                     void *user_data)
 {
-    (void)overlay; /* reserved for future multi-overlay support */
-    if (!s_unlock_btn || !cb) return;
-    lv_obj_add_event_cb(s_unlock_btn, cb, LV_EVENT_CLICKED, user_data);
-    lv_obj_add_flag(s_unlock_btn, LV_OBJ_FLAG_CLICKABLE);
-}
-
-void scr_ringing_set_door_name(const char *door_name)
-{
-    if (s_sub_label && door_name) {
-        lv_label_set_text(s_sub_label, door_name);
-    }
+    (void)overlay;
+    if (!s_btn_door || !cb) return;
+    lv_obj_add_event_cb(s_btn_door, cb, LV_EVENT_CLICKED, user_data);
 }
 
 void scr_ringing_set_accept_handler(lv_obj_t *overlay,
@@ -385,29 +295,44 @@ void scr_ringing_set_accept_handler(lv_obj_t *overlay,
                                      void *user_data)
 {
     (void)overlay;
-    if (!s_accept_btn || !cb) return;
-    lv_obj_add_event_cb(s_accept_btn, cb, LV_EVENT_CLICKED, user_data);
-    lv_obj_add_flag(s_accept_btn, LV_OBJ_FLAG_CLICKABLE);
+    if (!s_btn_accept || !cb) return;
+    lv_obj_add_event_cb(s_btn_accept, cb, LV_EVENT_CLICKED, user_data);
 }
 
-/* ---------- Show / Hide (instant, S4-03) ---------- *
+void scr_ringing_set_ignore_handler(lv_obj_t *overlay,
+                                     lv_event_cb_t cb,
+                                     void *user_data)
+{
+    (void)overlay;
+    if (!s_btn_ignore || !cb) return;
+    lv_obj_add_event_cb(s_btn_ignore, cb, LV_EVENT_CLICKED, user_data);
+}
+
+void scr_ringing_set_record_handler(lv_obj_t *overlay,
+                                     lv_event_cb_t cb,
+                                     void *user_data)
+{
+    (void)overlay;
+    if (!s_btn_record || !cb) return;
+    lv_obj_add_event_cb(s_btn_record, cb, LV_EVENT_CLICKED, user_data);
+}
+
+void scr_ringing_set_door_name(const char *door_name)
+{
+    if (!s_status_label || !door_name) return;
+    char buf[96];
+    snprintf(buf, sizeof(buf), "Klingelt   %s", door_name);
+    lv_label_set_text(s_status_label, buf);
+}
+
+
+/* ---------- Show / Hide ---------- *
  *
- * Vorher: 400ms opa-Fade auf s_overlay via style_opa-Anim + completion-
- * Callback fuer HIDDEN-Flag. Hat in LVGL 9 nicht zuverlaessig cascadiert
- * (refr nutzt style_opa_layered fuer Cascade-Skip, nicht style_opa) und
- * die completion_cb feuerte unter Race-Bedingungen nicht.
- *
- * Jetzt: synchroner HIDDEN-Toggle + explizit lv_obj_invalidate. Plus
- * der Stream-Canvas wird beim Show ins Overlay reparented (zwischen
- * backdrop und scrim) und beim Hide zurueck zum stream_view. Die
- * Detach-Operation laeuft auf JEDEM Schliess-Pfad (cancel/reject/accept),
- * weil alle ueber idle_mode_mgr_doorbell_end -> scr_ringing_hide gehen.
- *
- * Z-Order im Overlay nach Show:
- *   index 0   backdrop  opak schwarz - Boden falls Stream aus ist
- *   index 1   canvas    Live-Stream Vollbild (reparented)
- *   index 2   scrim     0.35 schwarz - Lesbarkeits-Abdunklung
- *   index 3   content   Bell + Text + 3 Action-Buttons
+ * Reihenfolge im show: erst Idle-Chrome verstecken (Topbar, Frame,
+ * Action-Bar), dann stream_pipeline auf fullscreen (Stream Vollbreite
+ * y=0..1080), dann overlay sichtbar machen. Die Toolbar liegt im
+ * sicheren Bereich y=1080..1280 - LVGL malt sie einmal und keiner
+ * uebermalt sie (kein Doppel-Render-Konflikt mit dem Stream).
  */
 
 void scr_ringing_show(void)
@@ -418,21 +343,13 @@ void scr_ringing_show(void)
     }
     ESP_LOGI(TAG, "RING_SHOW");
 
-    /* S5-04 Teil C: Klingel-im-Livestream.
-     *
-     * Stream bleibt sichtbar (Direct-FB laeuft weiter). Bell + 3 Klingel-
-     * Buttons erscheinen direkt ueber dem Stream im transparenten
-     * Overlay-content. Die normale Action-Bar (3 Idle-Buttons) wird
-     * ausgeblendet damit die grossen Klingel-Buttons darunter Platz
-     * haben.
-     *
-     * KEIN Canvas-Reparenting mehr (das war S4-03..S5-03 fuer den
-     * Canvas-Pfad - im Direct-FB ist Reparenten irrelevant).
-     */
-    stream_pipeline_set_visible(true);
     scr_idle_set_actions_visible(false);
+    scr_idle_set_topbar_visible(false);
+    scr_idle_set_design_frame_visible(false);
 
-    /* Top-Layer-Foreground (defensiv) + sichtbar + invalidieren. */
+    stream_pipeline_set_visible(true);
+    stream_pipeline_set_fullscreen(true);
+
     lv_obj_move_foreground(s_overlay);
     lv_obj_clear_flag(s_overlay, LV_OBJ_FLAG_HIDDEN);
     lv_obj_invalidate(s_overlay);
@@ -445,11 +362,11 @@ void scr_ringing_hide(void)
 
     ESP_LOGI(TAG, "RING_HIDE");
 
-    /* Klingel vorbei - Action-Bar wieder einblenden, Stream-Sichtbarkeit
-     * auf den aktuellen Idle-Mode setzen (STREAM -> true, Screensaver
-     * -> false). Idempotent zum idle_mode_mgr-Restore der danach
-     * scr_idle_show_*_mode rufen kann. */
+    stream_pipeline_set_fullscreen(false);
+
     scr_idle_set_actions_visible(true);
+    scr_idle_set_topbar_visible(true);
+    scr_idle_set_design_frame_visible(true);
     stream_pipeline_set_visible(!scr_idle_is_screensaver_mode());
 
     lv_obj_add_flag(s_overlay, LV_OBJ_FLAG_HIDDEN);

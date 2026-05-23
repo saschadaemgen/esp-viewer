@@ -84,6 +84,30 @@ void scr_ringing_set_accept_handler(lv_obj_t *overlay,
                                      void *user_data);
 
 /**
+ * S5-16: Attach a click handler to the ignore/mute button (grey, links
+ * aussen in der Klingel-Toolbar).
+ *
+ * Soll-Verhalten: Klingel-Modus verlassen, OHNE Ablehnen-Signal nach
+ * aussen (im Gegensatz zu reject, das die Person an der Tuer als
+ * "abgewiesen" markiert). Implementiert in Stufe 2 - bis dahin nimmt
+ * der Setter Stub-Handler entgegen.
+ */
+void scr_ringing_set_ignore_handler(lv_obj_t *overlay,
+                                     lv_event_cb_t cb,
+                                     void *user_data);
+
+/**
+ * S5-16: Attach a click handler to the record button (rot, rechts
+ * aussen in der Klingel-Toolbar). Gespraechs-Aufnahme fuer Notfaelle.
+ *
+ * Implementiert in Stufe 4 (Audio-Mitschnitt-Pipeline, eigener
+ * Schritt). Setter nimmt jetzt Stub-Handler entgegen.
+ */
+void scr_ringing_set_record_handler(lv_obj_t *overlay,
+                                     lv_event_cb_t cb,
+                                     void *user_data);
+
+/**
  * Fade-In Animation: macht das Overlay sichtbar via opacity 0->1
  * ueber 400ms ease-out. Bringt das Overlay vor anderen LVGL-Kindern
  * (move_foreground) damit es ueber Stream/Screensaver/Settings liegt.
