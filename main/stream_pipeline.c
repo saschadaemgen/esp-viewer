@@ -173,6 +173,14 @@ static const char *TAG = "STREAM";
 #define STREAM_X_PAD       14   /* UI_SCREEN_PAD: Idle-Seiten-Border */
 #define STREAM_REGION_W    (STREAM_W - 2 * STREAM_X_PAD)           /* 772 */
 
+/* S5-16 Klingel-Mode: Stream Vollbreite x=0..800, von oben y=0 bis
+ * y=(STREAM_H - KLINGEL_TOOLBAR_H). Darunter liegt die Klingel-Toolbar
+ * (LVGL, scr_ringing). Single Source of Truth ist UI_KLINGEL_TOOLBAR_H
+ * in ui_tokens.h - hier doppelt deklariert weil stream_pipeline.c
+ * keine UI-Tokens included. Bei Aenderung beide Werte synchronisieren. */
+#define KLINGEL_TOOLBAR_H  200
+#define KLINGEL_STREAM_H   (STREAM_H - KLINGEL_TOOLBAR_H)            /* 1080 */
+
 /* JPEG input + decode-output buffers */
 static uint8_t *s_jpeg_buf = NULL;
 static size_t s_jpeg_buf_capacity = 1024 * 1024;
@@ -702,13 +710,19 @@ static void mjpeg_task(void *arg)
                  *                 links + rechts bleibt sichtbar)
                  *     Y: 88..1160 (1072 hoch, Stream-Window, LVGL Topbar +
                  *                  Action-Bar bleiben sichtbar)
-                 *   fullscreen=true (S5-10, Klingel):
-                 *     X: 0..800 (voll-breit)
-                 *     Y: 0..1280 (ganzes FB)
+                 *   fullscreen=true (S5-16 Plan B, Klingel):
+                 *     X: 0..800   (voll-breit, Topbar weg)
+                 *     Y: 0..1080  (KLINGEL_STREAM_H, oben+rechts/links bis
+                 *                  zur Oberkante der Klingel-Toolbar)
+                 *     Toolbar-Bereich y=1080..1280 (200 px) NICHT vom Stream
+                 *     beschrieben - dort liegt die LVGL-Klingel-Toolbar
+                 *     (scr_ringing) im "sicheren" Bereich, kein Doppel-
+                 *     Render-Konflikt wie beim alten PPA-UI-Overlay.
                  *
-                 * Im fullscreen-Mode wird die Topbar-/Action-Bar-Region (LVGL)
-                 * vom Stream uebermalt. Der Caller (scr_ringing_show)
-                 * versteckt die LVGL-Chrome bevor er fullscreen setzt.
+                 * Im fullscreen-Mode wird die Topbar-Region (LVGL, y=14..78)
+                 * vom Stream uebermalt. scr_ringing_show versteckt die
+                 * LVGL-Chrome (Topbar, Design-Frame, Idle-Action-Bar)
+                 * bevor fullscreen=true gesetzt wird.
                  *
                  * Snapshot des Toggle in lokale Variable damit ein gleichzeitiger
                  * set_fullscreen-Call (anderer Task) nicht mitten in der
@@ -719,8 +733,8 @@ static void mjpeg_task(void *arg)
                 const size_t copy_src_y  = fs ? 0u            : (size_t)STREAM_SRC_ROW0;
                 const size_t copy_dst_x  = fs ? 0u            : (size_t)STREAM_X_PAD;
                 const size_t copy_dst_y  = fs ? 0u            : (size_t)STREAM_Y_TOP;
-                const size_t copy_width  = fs ? (size_t)STREAM_W : (size_t)STREAM_REGION_W;
-                const size_t copy_height = fs ? (size_t)STREAM_H : (size_t)STREAM_REGION_H;
+                const size_t copy_width  = fs ? (size_t)STREAM_W       : (size_t)STREAM_REGION_W;
+                const size_t copy_height = fs ? (size_t)KLINGEL_STREAM_H : (size_t)STREAM_REGION_H;
 
                 esp_async_fbcpy_trans_desc_t cfg = {
                     .src_buffer = s_stream_buf,

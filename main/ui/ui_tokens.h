@@ -279,6 +279,25 @@ extern "C" {
 #define UI_RING_BTN_SIZE          143
 #define UI_RING_BTN_ICON          64
 
+/* S5-16 Plan B: Klingel-UI als untere Toolbar.
+ *
+ * Im Klingel-Modus wird der Stream Vollbreite von y=0 bis y=(SCREEN_H -
+ * KLINGEL_TOOLBAR_H) gezeichnet (kein UI-Overlay ueber dem Stream mehr -
+ * der PPA-Overlay-Pfad hat in S5-08..S5-15 wegen LVGL-Doppel-Render
+ * gescheitert). Die Toolbar liegt im "sicheren" Bereich y >= 1080 wo
+ * der Stream nicht hinschreibt - reines LVGL, stabil wie die Topbar.
+ *
+ *   Stream-Region (Klingel):  y =    0 .. 1080  (1080 hoch, Vollbreite)
+ *   Klingel-Toolbar:          y = 1080 .. 1280  (KLINGEL_TOOLBAR_H = 200)
+ *
+ * Layout in der Toolbar (LTR, 5 Buttons + 1-Zeile Status-Label):
+ *   [Ignorieren(72)]  [Annehmen(104)]  [Tuer(144,pulsierend)]  [Ablehnen(104)]  [Record(72)]
+ */
+#define UI_KLINGEL_TOOLBAR_H      200
+#define UI_KLINGEL_BTN_LG         144   /* Tuer (gross + pulse) */
+#define UI_KLINGEL_BTN_MD         104   /* Annehmen + Ablehnen */
+#define UI_KLINGEL_BTN_SM         72    /* Ignorieren + Record */
+
 /* Action-Buttons (Idle bottom bar) */
 #define UI_ACTION_BTN_SIZE        52
 #define UI_ACTION_BTN_ICON        22
