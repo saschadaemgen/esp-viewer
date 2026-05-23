@@ -170,6 +170,55 @@ static lv_obj_t *build_text_btn(lv_obj_t *parent, int32_t size,
     return btn;
 }
 
+/* Aussen-Block (MUTE links, REC rechts). Col-Container mit dem text_btn
+ * oben und einem kleinen uppercase-Label darunter. Eng (~2 px gap).
+ * Caller bekommt den Button-Pointer fuer die Handler-Verdrahtung. */
+static lv_obj_t *build_outer_block(lv_obj_t *parent, int32_t btn_size,
+                                    const char *icon,
+                                    lv_color_t icon_color, lv_opa_t icon_opa,
+                                    const char *label_text,
+                                    lv_color_t label_color, lv_opa_t label_opa,
+                                    lv_obj_t **out_btn)
+{
+    lv_obj_t *col = lv_obj_create(parent);
+    lv_obj_remove_style_all(col);
+    lv_obj_set_size(col, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(col, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(col, 0, 0);
+    lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(col, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(col, 2, 0);   /* eng: Button + Label nah beieinander */
+    lv_obj_clear_flag(col, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(col, LV_OBJ_FLAG_CLICKABLE);
+
+    *out_btn = build_text_btn(col, btn_size, icon, icon_color, icon_opa, 256);
+
+    lv_obj_t *lbl = lv_label_create(col);
+    lv_label_set_text(lbl, label_text);
+    lv_obj_set_style_text_font(lbl, UI_FONT_XS, 0);   /* 12 px */
+    lv_obj_set_style_text_color(lbl, label_color, 0);
+    lv_obj_set_style_text_opa(lbl, label_opa, 0);
+    lv_obj_set_style_text_letter_space(lbl, 1, 0);
+
+    return col;
+}
+
+/* Vertikaler Hairline-Trenner (1 px Linie, dezent). Trennt MUTE +
+ * REC von der Mittelgruppe ohne harte Border. */
+static lv_obj_t *build_vert_hairline(lv_obj_t *parent, int32_t height)
+{
+    lv_obj_t *hl = lv_obj_create(parent);
+    lv_obj_remove_style_all(hl);
+    lv_obj_set_size(hl, 1, height);
+    lv_obj_set_style_bg_color(hl, UI_COLOR_HAIRLINE, 0);
+    lv_obj_set_style_bg_opa(hl, UI_OPA_HAIRLINE_STRONG, 0);
+    lv_obj_set_style_border_width(hl, 0, 0);
+    lv_obj_clear_flag(hl, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(hl, LV_OBJ_FLAG_CLICKABLE);
+    return hl;
+}
+
 
 /* ---------- Tuer-Button (statisch, S5-17) ----------
  *
@@ -278,13 +327,30 @@ lv_obj_t *scr_ringing_build(lv_obj_t *parent, const scr_ringing_data_t *data)
     lv_obj_clear_flag(btn_row, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(btn_row, LV_OBJ_FLAG_CLICKABLE);
 
-    /* Child 1 (links aussen): MUTE / Stumm. Transparent, Icon weiss
-     * gedaempft (~0.5). Caller fuegt im naechsten Commit ein Label
-     * drumherum. */
-    s_btn_ignore = build_text_btn(btn_row, UI_KLINGEL_BTN_SM,
-                                   ICON_BELL_OFF,
-                                   UI_COLOR_TEXT, 128, /* ~0.50 */
-                                   256);
+    /* Child 1 (links aussen): MUTE-Block (Button + Label) + Hairline
+     * rechts. Eigener sub-flex-row Container damit die beiden
+     * (col-Block + Hairline) als eine Einheit am linken Rand sitzen.
+     * MUTE-Block selber ist ein col mit Icon oben + Label unten. */
+    lv_obj_t *left_block = lv_obj_create(btn_row);
+    lv_obj_remove_style_all(left_block);
+    lv_obj_set_size(left_block, LV_SIZE_CONTENT, UI_KLINGEL_BTN_LG);
+    lv_obj_set_style_bg_opa(left_block, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(left_block, 0, 0);
+    lv_obj_set_flex_flow(left_block, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(left_block, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(left_block, UI_SPACE_5, 0); /* 16 zwischen MUTE und Hairline */
+    lv_obj_clear_flag(left_block, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(left_block, LV_OBJ_FLAG_CLICKABLE);
+
+    build_outer_block(left_block, UI_KLINGEL_BTN_SM,
+                       ICON_BELL_OFF,
+                       UI_COLOR_TEXT, 128,    /* Icon weiss ~0.50 */
+                       "MUTE",
+                       UI_COLOR_TEXT, 102,    /* Label weiss ~0.40 */
+                       &s_btn_ignore);
+
+    build_vert_hairline(left_block, UI_KLINGEL_BTN_LG - 8); /* ~88 px */
 
     /* Child 2 (Mitte): Hauptgruppe Annehmen/Tuer/Ablehnen eng beieinander
      * als eigener sub-flex-row Container. LV_SIZE_CONTENT = Container
@@ -320,11 +386,28 @@ lv_obj_t *scr_ringing_build(lv_obj_t *parent, const scr_ringing_data_t *data)
                                     UI_COLOR_DANGER, 242, /* ~0.95 */
                                     325);
 
-    /* Child 3 (rechts aussen): REC. Transparent, Icon dezent rot (~0.7). */
-    s_btn_record = build_text_btn(btn_row, UI_KLINGEL_BTN_SM,
-                                   ICON_CIRCLE,
-                                   UI_COLOR_DANGER, 179, /* ~0.70 */
-                                   256);
+    /* Child 3 (rechts aussen): Hairline links + REC-Block (Button +
+     * Label) rechts. Spiegelbildlich zum left_block. */
+    lv_obj_t *right_block = lv_obj_create(btn_row);
+    lv_obj_remove_style_all(right_block);
+    lv_obj_set_size(right_block, LV_SIZE_CONTENT, UI_KLINGEL_BTN_LG);
+    lv_obj_set_style_bg_opa(right_block, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(right_block, 0, 0);
+    lv_obj_set_flex_flow(right_block, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(right_block, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(right_block, UI_SPACE_5, 0); /* 16 */
+    lv_obj_clear_flag(right_block, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(right_block, LV_OBJ_FLAG_CLICKABLE);
+
+    build_vert_hairline(right_block, UI_KLINGEL_BTN_LG - 8);
+
+    build_outer_block(right_block, UI_KLINGEL_BTN_SM,
+                       ICON_CIRCLE,
+                       UI_COLOR_DANGER, 179,  /* Icon rot ~0.70 */
+                       "REC",
+                       UI_COLOR_DANGER, 153,  /* Label rot ~0.60 */
+                       &s_btn_record);
 
     /* S5-17: KEIN Tuer-Puls mehr - hat im Direct-FB-Setup auf 4 fps
      * gedrueckt (Geraete-Befund). Tuer-Button bleibt statisch. */
