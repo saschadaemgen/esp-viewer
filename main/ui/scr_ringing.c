@@ -15,10 +15,9 @@
  *  [Ignorieren] [Annehmen] [TUER (gross+pulse)] [Ablehnen] [Record]
  *      72           104             144              104        72
  *
- * Hauptaktion (Tuer-Auf, mittig+gross) pulsiert dezent via lv_anim auf
- * bg_opa - cheap LVGL-Render in der 144x144 Region, im sicheren
- * Toolbar-Bereich (Stream beruehrt y<1080 nicht). Kein transform_*
- * (das war der CPU-Killer S5-09).
+ * Hauptaktion (Tuer-Auf, mittig+gross) ist statisch (S5-17). Der
+ * bg_opa-Puls aus S5-16 hat im Direct-FB-Setup die fps auf ~4
+ * gedrueckt - Tuer-Button bleibt jetzt ohne Animation.
  *
  * Stufe 1 verdraht Tuer/Annehmen/Ablehnen wie heute via main.c-Setters.
  * Ignorieren + Record sind aktive Buttons mit Stub-Handlern - Funktion
@@ -103,32 +102,15 @@ static lv_obj_t *build_kring_btn(lv_obj_t *parent, const kring_btn_style_t *styl
 }
 
 
-/* ---------- Tuer-Button Puls-Animation ----------
+/* ---------- Tuer-Button (statisch, S5-17) ----------
  *
- * bg-opa zycelt 200..255 (78%..100%) jeweils 750 ms hin + zurueck =
- * 1.5 s Cycle, infinite, ease-in-out. Repaintet nur die 144x144
- * Tuer-Button-Region im sicheren Toolbar-Bereich (y>=1080, vom Stream
- * nicht beruehrt). Subtiler "atmender" Glow ohne Pixel-Transform - kein
- * CPU-Killer wie das alte transform_rotation-Wackeln (S5-09).
+ * S5-16 hatte einen bg_opa-Puls auf dem Tuer-Button (1.5 s Cycle infinite).
+ * Sollte cheap sein weil im sicheren Toolbar-Bereich und nur die 144x144
+ * Region invalidiert. Geraete-Befund S5-17: fps brach auf ~4 ein, CPU
+ * oben. Der LVGL-Repaint-Zyklus dieser pro-Frame-Anim ist im Direct-FB-
+ * Setup zu teuer (vermutlich Interaktion mit dem trans_sem/VSYNC-Sync der
+ * Stream-Pipeline). Puls KOMPLETT raus, Tuer-Button bleibt statisch.
  */
-static void door_pulse_exec_cb(void *var, int32_t v)
-{
-    lv_obj_set_style_bg_opa((lv_obj_t *)var, (lv_opa_t)v, 0);
-}
-
-static void start_door_pulse(lv_obj_t *door_btn)
-{
-    lv_anim_t a;
-    lv_anim_init(&a);
-    lv_anim_set_var(&a, door_btn);
-    lv_anim_set_exec_cb(&a, door_pulse_exec_cb);
-    lv_anim_set_values(&a, 200, 255);
-    lv_anim_set_duration(&a, 750);
-    lv_anim_set_playback_duration(&a, 750);
-    lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
-    lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
-    lv_anim_start(&a);
-}
 
 
 /* ---------- Top-level build ---------- */
@@ -263,9 +245,8 @@ lv_obj_t *scr_ringing_build(lv_obj_t *parent, const scr_ringing_data_t *data)
     lv_obj_clear_flag(rec_dot, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(rec_dot, LV_OBJ_FLAG_CLICKABLE);
 
-    /* Tuer-Puls-Anim starten (im sicheren Toolbar-Bereich, kein Stream-
-     * Konflikt). */
-    start_door_pulse(s_btn_door);
+    /* S5-17: KEIN Tuer-Puls mehr - hat im Direct-FB-Setup auf 4 fps
+     * gedrueckt (Geraete-Befund). Tuer-Button bleibt statisch. */
 
     return overlay;
 }
