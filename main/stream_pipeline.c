@@ -180,17 +180,17 @@ static const char *TAG = "STREAM";
  * Aenderung beide Werte synchronisieren.
  *
  *   y =    0 ..   88   KLINGEL_HEADER_H  (LVGL Klingel-Header-Bar)
- *   y =   88 .. 1135   Stream-Video      (KLINGEL_VIDEO_H = 1047)
- *   y = 1135 .. 1280   KLINGEL_TOOLBAR_H (LVGL Klingel-Toolbar)
+ *   y =   88 .. 1140   Stream-Video      (KLINGEL_VIDEO_H = 1052)
+ *   y = 1140 .. 1280   KLINGEL_TOOLBAR_H (LVGL Klingel-Toolbar)
  *
  * Video wird zentriert v-cropt: aus dem 800x1280 Decoder-Buffer kopieren
- * wir die mittleren 1047 Zeilen (KLINGEL_SRC_ROW0=116) in den FB ab y=88.
- * S5-20/S5-21: Toolbar 140 -> 150 (S5-20) -> 145 (S5-21, +5 netto),
- *              Stream-Video 1052 -> 1047. */
+ * wir die mittleren 1052 Zeilen (KLINGEL_SRC_ROW0=114) in den FB ab y=88.
+ * S5-22: Toolbar-Hoehe zurueck auf 140 (S5-20/S5-21-Schiebung war
+ * Symptom; symmetrische Zentrierung loest's an der Wurzel). */
 #define KLINGEL_HEADER_H   88
-#define KLINGEL_TOOLBAR_H  145
-#define KLINGEL_VIDEO_H    (STREAM_H - KLINGEL_HEADER_H - KLINGEL_TOOLBAR_H)  /* 1047 */
-#define KLINGEL_SRC_ROW0   ((STREAM_H - KLINGEL_VIDEO_H) / 2)                /* 116 */
+#define KLINGEL_TOOLBAR_H  140
+#define KLINGEL_VIDEO_H    (STREAM_H - KLINGEL_HEADER_H - KLINGEL_TOOLBAR_H)  /* 1052 */
+#define KLINGEL_SRC_ROW0   ((STREAM_H - KLINGEL_VIDEO_H) / 2)                /* 114 */
 
 /* JPEG input + decode-output buffers */
 static uint8_t *s_jpeg_buf = NULL;
@@ -721,11 +721,11 @@ static void mjpeg_task(void *arg)
                  *                 links + rechts bleibt sichtbar)
                  *     Y: 88..1160 (1072 hoch, Stream-Window, LVGL Topbar +
                  *                  Action-Bar bleiben sichtbar)
-                 *   fullscreen=true (S5-18 Klingel, S5-20/S5-21 Toolbar+5):
+                 *   fullscreen=true (S5-18 Klingel):
                  *     X: 0..800   (voll-breit)
-                 *     Y: 88..1135 (KLINGEL_VIDEO_H=1047 hoch, zwischen
+                 *     Y: 88..1140 (KLINGEL_VIDEO_H=1052 hoch, zwischen
                  *                  oberer Klingel-Header-Bar [0..88] und
-                 *                  unterer Klingel-Toolbar [1135..1280])
+                 *                  unterer Klingel-Toolbar [1140..1280])
                  *     Header- + Toolbar-Bereich NICHT vom Stream beschrieben
                  *     - dort liegt die LVGL-Klingel-UI im "sicheren" Bereich,
                  *     kein Doppel-Render-Konflikt.
