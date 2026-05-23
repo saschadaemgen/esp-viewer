@@ -180,11 +180,26 @@ static jpeg_decoder_handle_t s_jpeg_engine = NULL;
  */
 static volatile bool s_stream_visible = false;
 
+/*
+ * S5-10: Vollbild-Toggle. Default false = Stream-Region (y=88..1160)
+ * wie im Idle. True = ganzes FB (y=0..1280) fuer Klingel-Vollbild.
+ * Caller muss Topbar/Action-Bar vorher verstecken sonst flickert es.
+ */
+static volatile bool s_stream_fullscreen = false;
+
 void stream_pipeline_set_visible(bool visible)
 {
     if (s_stream_visible != visible) {
         ESP_LOGI(TAG, "stream visible: %d -> %d", s_stream_visible, visible);
         s_stream_visible = visible;
+    }
+}
+
+void stream_pipeline_set_fullscreen(bool fullscreen)
+{
+    if (s_stream_fullscreen != fullscreen) {
+        ESP_LOGI(TAG, "stream fullscreen: %d -> %d", s_stream_fullscreen, fullscreen);
+        s_stream_fullscreen = fullscreen;
     }
 }
 
@@ -669,18 +684,43 @@ static void mjpeg_task(void *arg)
             if (!s_fbcpy_handle || !s_dpi_fbs[0] || !s_dpi_fbs[1] || !s_copy_done_sem) {
                 ESP_LOGW(TAG, "fb sync not installed - skipping draw");
             } else if (bsp_display_lock(100)) {
+                /*
+                 * S5-10: Copy-Geometrie haengt am s_stream_fullscreen-Toggle.
+                 *
+                 *   fullscreen=false (Default, Idle):
+                 *     src_offset_y = STREAM_SRC_ROW0 (104, zentrierter v-crop)
+                 *     dst_offset_y = STREAM_Y_TOP (88)
+                 *     copy_size_y  = STREAM_REGION_H (1072) -> nur Fenster-Region
+                 *   fullscreen=true (Klingel):
+                 *     src_offset_y = 0
+                 *     dst_offset_y = 0
+                 *     copy_size_y  = STREAM_H (1280) -> ganzes FB
+                 *
+                 * Im fullscreen-Mode wird die Topbar-/Action-Bar-Region (LVGL)
+                 * vom Stream uebermalt. Der Caller (scr_ringing_show)
+                 * versteckt die LVGL-Chrome bevor er fullscreen setzt.
+                 *
+                 * Snapshot des Toggle in lokale Variable damit ein gleichzeitiger
+                 * set_fullscreen-Call (anderer Task) nicht mitten in der
+                 * Frame-Bearbeitung die Geometrie unter uns aendert.
+                 */
+                const bool fs = s_stream_fullscreen;
+                const size_t copy_src_y  = fs ? 0u            : (size_t)STREAM_SRC_ROW0;
+                const size_t copy_dst_y  = fs ? 0u            : (size_t)STREAM_Y_TOP;
+                const size_t copy_height = fs ? (size_t)STREAM_H : (size_t)STREAM_REGION_H;
+
                 esp_async_fbcpy_trans_desc_t cfg = {
                     .src_buffer = s_stream_buf,
                     .src_buffer_size_x = STREAM_W,
                     .src_buffer_size_y = STREAM_H,
                     .src_offset_x = 0,
-                    .src_offset_y = STREAM_SRC_ROW0,        /* zentrierter v-crop */
+                    .src_offset_y = copy_src_y,
                     .dst_buffer_size_x = STREAM_W,           /* FB ist 800x1280 */
                     .dst_buffer_size_y = STREAM_H,
                     .dst_offset_x = 0,
-                    .dst_offset_y = STREAM_Y_TOP,            /* Stream-Region in FB */
+                    .dst_offset_y = copy_dst_y,
                     .copy_size_x = STREAM_W,
-                    .copy_size_y = STREAM_REGION_H,
+                    .copy_size_y = copy_height,
                     .pixel_format_unique_id = {
                         .color_type_id = COLOR_TYPE_ID(COLOR_SPACE_RGB, COLOR_PIXEL_RGB565),
                     },
@@ -712,10 +752,12 @@ static void mjpeg_task(void *arg)
                     ESP_LOGW(TAG, "fbcpy fb1: %s", esp_err_to_name(ce));
                 }
 
-                /* Destination-Cache invalidaten - damit Display-DMA die
-                 * frischen Daten sieht und nicht den Cache-Stand. */
-                size_t region_bytes = (size_t)STREAM_W * STREAM_REGION_H * STREAM_BPP;
-                size_t dst_offset_bytes = (size_t)STREAM_Y_TOP * STREAM_W * STREAM_BPP;
+                /* Destination-Cache flushen ueber die tatsaechlich geschriebene
+                 * Region - damit Display-DMA die frischen Daten sieht. Im
+                 * fullscreen-Mode = ganzes FB (2 MB), sonst nur Stream-Region
+                 * (1.6 MB). */
+                size_t region_bytes      = (size_t)STREAM_W * copy_height * STREAM_BPP;
+                size_t dst_offset_bytes  = copy_dst_y * STREAM_W * STREAM_BPP;
                 esp_cache_msync((uint8_t *)s_dpi_fbs[0] + dst_offset_bytes, region_bytes,
                                 ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);
                 esp_cache_msync((uint8_t *)s_dpi_fbs[1] + dst_offset_bytes, region_bytes,

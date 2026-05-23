@@ -75,6 +75,27 @@ esp_err_t stream_pipeline_install_fb_sync(void);
 void stream_pipeline_set_visible(bool visible);
 
 /**
+ * S5-10 Vollbild-Toggle (Klingel-Mode).
+ *
+ *   false -> Default. Stream-Copy in die FBs nur in der Fenster-Region
+ *            (y=88..1160, 1072 Zeilen, zentrierter v-crop). Topbar +
+ *            Action-Bar (LVGL, y<88 / y>1170) bleiben unangetastet.
+ *   true  -> Stream-Copy ueber das gesamte FB (y=0..1280, alle 1280
+ *            Zeilen, kein Crop). Topbar + Action-Bar werden UEBERMALT -
+ *            der Aufrufer muss sie vorher verstecken (sonst flickert
+ *            es). Fuer den Klingel-Modus, wo das Video Vollbild
+ *            sichtbar sein soll und die Klingel-UI per Snapshot+PPA
+ *            (set_klingel_overlay) drueber gelegt wird.
+ *
+ * Aufrufer:
+ *   scr_ringing_show -> true   (Vollbild waehrend Klingelns)
+ *   scr_ringing_hide -> false  (zurueck zur normalen Idle-Geometrie)
+ *
+ * Thread-Safety: volatile bool, Aufruf aus jedem Task ok.
+ */
+void stream_pipeline_set_fullscreen(bool fullscreen);
+
+/**
  * Start the MJPEG stream pipeline.
  *
  * Preconditions:
