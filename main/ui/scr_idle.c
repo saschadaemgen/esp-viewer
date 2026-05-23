@@ -34,7 +34,9 @@ typedef struct {
     lv_obj_t *screensaver_view;
     lv_obj_t *settings_view;
     lv_obj_t *settings_btn;        /* the third ctrl-group icon */
+    lv_obj_t *topbar;              /* S5-11: topbar fuer Klingel-Vollbild-Hide */
     lv_obj_t *actions_row;         /* S5-04 Teil C: action-bar fuer Show/Hide */
+    lv_obj_t *design_frame;        /* S5-11: lv_layer_top frame fuer Klingel-Vollbild-Hide */
     lv_obj_t *hist_btn;            /* Verlauf-Button in der Action-Bar */
     lv_obj_t *hist_badge;          /* Unread-Count-Punkt am Verlauf-Button */
     bool      settings_shown;
@@ -199,6 +201,9 @@ static lv_obj_t *build_topbar(lv_obj_t *parent, const scr_idle_data_t *data)
     build_identity(bar, data);
     build_control_group(bar, data);
     build_clock(bar, data);
+
+    /* S5-11: Topbar-Ref cachen fuer scr_idle_set_topbar_visible. */
+    s_refs.topbar = bar;
 
     return bar;
 }
@@ -469,6 +474,9 @@ static void build_design_frame_overlay(void)
     /* Touch-Events sollen durch zum stream_view (Toggle-Click). */
     lv_obj_clear_flag(frame, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_clear_flag(frame, LV_OBJ_FLAG_SCROLLABLE);
+
+    /* S5-11: Frame-Ref cachen fuer scr_idle_set_design_frame_visible. */
+    s_refs.design_frame = frame;
 }
 
 
@@ -733,5 +741,25 @@ void scr_idle_set_actions_visible(bool visible)
         lv_obj_clear_flag(s_refs.actions_row, LV_OBJ_FLAG_HIDDEN);
     } else {
         lv_obj_add_flag(s_refs.actions_row, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+void scr_idle_set_topbar_visible(bool visible)
+{
+    if (!s_refs.topbar) return;
+    if (visible) {
+        lv_obj_clear_flag(s_refs.topbar, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(s_refs.topbar, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+void scr_idle_set_design_frame_visible(bool visible)
+{
+    if (!s_refs.design_frame) return;
+    if (visible) {
+        lv_obj_clear_flag(s_refs.design_frame, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(s_refs.design_frame, LV_OBJ_FLAG_HIDDEN);
     }
 }

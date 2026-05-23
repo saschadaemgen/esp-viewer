@@ -194,6 +194,25 @@ void scr_idle_set_unread_count(int count);
  */
 void scr_idle_set_actions_visible(bool visible);
 
+/**
+ * S5-11: Topbar (Identity/Control-Group/Clock, y=14..78) ein-/ausblenden.
+ *
+ * Im Klingel-Vollbild-Modus ist die Topbar weg - Stream geht y=0..1280
+ * und wuerde Topbar uebermalen + LVGL flickert sie sekuendlich (Uhr).
+ *
+ * Idempotent. No-op wenn scr_idle_build noch nicht gelaufen ist.
+ */
+void scr_idle_set_topbar_visible(bool visible);
+
+/**
+ * S5-11: Design-Frame-Overlay (lv_layer_top, 14px LEFT/RIGHT-Border +
+ * runde Ecken ueber der Stream-Region) ein-/ausblenden.
+ *
+ * Im Klingel-Vollbild-Modus soll Video bis an die Display-Raender -
+ * keine Anthrazit-Streifen. Idempotent.
+ */
+void scr_idle_set_design_frame_visible(bool visible);
+
 #ifdef __cplusplus
 }
 #endif
