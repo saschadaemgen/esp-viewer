@@ -2,22 +2,25 @@
  * scr_ringing.c - Klingel-Screen (S5-16 Plan B: Toolbar unten, kein
  * UI-Overlay ueber dem Stream).
  *
- * Layout (waehrend Klingelns):
- *   y =    0..1080   Stream Vollbreite (stream_pipeline fullscreen=true,
+ * Layout (waehrend Klingelns, S5-17 refined):
+ *   y =    0..1110   Stream Vollbreite (stream_pipeline fullscreen=true,
  *                    KLINGEL_STREAM_H = STREAM_H - KLINGEL_TOOLBAR_H)
- *   y = 1080..1280   Klingel-Toolbar (LVGL, im "sicheren" Bereich den
+ *   y = 1110..1280   Klingel-Toolbar (LVGL, im "sicheren" Bereich den
  *                    der Stream nicht beschreibt - kein Doppel-Render
  *                    wie beim alten PPA-Overlay-Versuch S5-08..S5-15)
  *
  * Toolbar (5 Buttons + 1-Zeile Status-Label, LTR):
  *
- *  Klingelt - Hauseingang
- *  [Ignorieren] [Annehmen] [TUER (gross+pulse)] [Ablehnen] [Record]
- *      72           104             144              104        72
+ *  Klingelt   Hauseingang                       (UI_FONT_LG, secondary opa)
+ *  [Ignorieren] [Annehmen] [TUER (primary)] [Ablehnen] [Record]
+ *       56          72           96             72         56
+ *  glass-grau   gruen      blue-gradient    rot       rot-mit-circle
  *
- * Hauptaktion (Tuer-Auf, mittig+gross) ist statisch (S5-17). Der
- * bg_opa-Puls aus S5-16 hat im Direct-FB-Setup die fps auf ~4
- * gedrueckt - Tuer-Button bleibt jetzt ohne Animation.
+ * Hauptaktion (Tuer-Auf, mittig+gross) ist STATISCH (S5-17). Der bg_opa-
+ * Puls aus S5-16 hat im Direct-FB-Setup die fps auf ~4 gedrueckt - keine
+ * kontinuierlichen LVGL-Animationen mehr in der Toolbar. Tuer-Button
+ * unterscheidet sich visuell durch subtilen Vertikal-Gradient (light-
+ * blau oben -> accent-blau unten), nicht durch Bewegung.
  *
  * Stufe 1 verdraht Tuer/Annehmen/Ablehnen wie heute via main.c-Setters.
  * Ignorieren + Record sind aktive Buttons mit Stub-Handlern - Funktion
@@ -53,20 +56,26 @@ static lv_obj_t *s_btn_reject   = NULL;
 static lv_obj_t *s_btn_record   = NULL;
 
 
-/* ---------- Toolbar-Button-Builder ----------
+/* ---------- Toolbar-Button-Builder (S5-17 refined) ----------
  *
  * Alle 5 Buttons teilen sich diese Helper-Funktion. Stil-Variabilitaet
- * (Groesse, Farbe, Glow, Icon-Scale) per kring_btn_style_t.
+ * (Groesse, Farbe, Gradient, Glow, Icon-Scale) per kring_btn_style_t.
+ *
+ * Refine S5-17: dezentere Schatten (width 12 statt 20, ofs_y 4 statt 8) -
+ * weniger laut, mehr iPad-Stil. Optionaler bg-Gradient (Tuer-Button) ueber
+ * grad_color != bg + grad_dir.
  */
 typedef struct {
-    const char *icon;       /* lucide_22 UTF-8 string, oder NULL */
-    int32_t     size;       /* Aussen-Durchmesser */
-    lv_color_t  bg;
-    lv_opa_t    bg_opa;
-    lv_color_t  shadow;
-    lv_opa_t    shadow_opa;
-    lv_color_t  icon_color;
-    int32_t     icon_scale; /* 256 = 1.0, e.g. 700 = 2.73x (22 -> ~60 px) */
+    const char    *icon;            /* lucide_22 UTF-8 string, oder NULL */
+    int32_t        size;            /* Aussen-Durchmesser */
+    lv_color_t     bg;
+    lv_opa_t       bg_opa;
+    lv_color_t     bg_grad;         /* Gradient-Zielfarbe (oder = bg fuer solid) */
+    lv_grad_dir_t  grad_dir;        /* LV_GRAD_DIR_NONE = solid */
+    lv_color_t     shadow;
+    lv_opa_t       shadow_opa;
+    lv_color_t     icon_color;
+    int32_t        icon_scale;      /* 256 = 1.0, lucide_22 base = 22 px */
 } kring_btn_style_t;
 
 static lv_obj_t *build_kring_btn(lv_obj_t *parent, const kring_btn_style_t *style)
@@ -78,9 +87,13 @@ static lv_obj_t *build_kring_btn(lv_obj_t *parent, const kring_btn_style_t *styl
     lv_obj_set_style_border_width(btn, 0, 0);
     lv_obj_set_style_bg_color(btn, style->bg, 0);
     lv_obj_set_style_bg_opa(btn, style->bg_opa, 0);
+    if (style->grad_dir != LV_GRAD_DIR_NONE) {
+        lv_obj_set_style_bg_grad_color(btn, style->bg_grad, 0);
+        lv_obj_set_style_bg_grad_dir(btn, style->grad_dir, 0);
+    }
     lv_obj_set_style_shadow_color(btn, style->shadow, 0);
-    lv_obj_set_style_shadow_width(btn, 20, 0);
-    lv_obj_set_style_shadow_ofs_y(btn, 8, 0);
+    lv_obj_set_style_shadow_width(btn, 12, 0);
+    lv_obj_set_style_shadow_ofs_y(btn, 4, 0);
     lv_obj_set_style_shadow_opa(btn, style->shadow_opa, 0);
     lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
@@ -130,10 +143,10 @@ lv_obj_t *scr_ringing_build(lv_obj_t *parent, const scr_ringing_data_t *data)
     lv_obj_clear_flag(overlay, LV_OBJ_FLAG_CLICKABLE);
     s_overlay = overlay;
 
-    /* Toolbar bottom 200 px. Opaker dunkler Hintergrund (anthrazit) mit
-     * subtiler Hairline-Border oben + abgerundeten oberen Ecken (iPad-
-     * Stil). clip_corner damit Buttons innerhalb der Toolbar nicht
-     * ueber die runden Ecken hinaus rendern. */
+    /* Toolbar bottom 170 px (S5-17 refined). Opaker dunkler Hintergrund
+     * (anthrazit) mit sehr dezenter Hairline-Border oben + abgerundeten
+     * oberen Ecken (iPad-Stil). clip_corner damit Buttons innerhalb der
+     * Toolbar nicht ueber die runden Ecken hinaus rendern. */
     lv_obj_t *toolbar = lv_obj_create(overlay);
     lv_obj_remove_style_all(toolbar);
     lv_obj_set_size(toolbar, UI_SCREEN_W, UI_KLINGEL_TOOLBAR_H);
@@ -141,36 +154,36 @@ lv_obj_t *scr_ringing_build(lv_obj_t *parent, const scr_ringing_data_t *data)
     lv_obj_set_style_bg_color(toolbar, UI_COLOR_BG_ELEV, 0);
     lv_obj_set_style_bg_opa(toolbar, LV_OPA_COVER, 0);
     lv_obj_set_style_border_color(toolbar, UI_COLOR_HAIRLINE, 0);
-    lv_obj_set_style_border_opa(toolbar, UI_OPA_HAIRLINE_STRONG, 0);
+    lv_obj_set_style_border_opa(toolbar, UI_OPA_HAIRLINE, 0);
     lv_obj_set_style_border_width(toolbar, 1, 0);
     lv_obj_set_style_border_side(toolbar, LV_BORDER_SIDE_TOP, 0);
     lv_obj_set_style_radius(toolbar, UI_RADIUS_2XL, 0);
     lv_obj_set_style_clip_corner(toolbar, true, 0);
-    lv_obj_set_style_pad_top(toolbar, UI_SPACE_3, 0);
-    lv_obj_set_style_pad_bottom(toolbar, UI_SPACE_2, 0);
-    lv_obj_set_style_pad_hor(toolbar, UI_SPACE_5, 0);
+    lv_obj_set_style_pad_top(toolbar, UI_SPACE_3, 0);    /* 12 */
+    lv_obj_set_style_pad_bottom(toolbar, UI_SPACE_5, 0); /* 16 */
+    lv_obj_set_style_pad_hor(toolbar, UI_SPACE_5, 0);    /* 16 */
     lv_obj_set_flex_flow(toolbar, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(toolbar, LV_FLEX_ALIGN_START,
                           LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_row(toolbar, UI_SPACE_2, 0);
+    lv_obj_set_style_pad_row(toolbar, UI_SPACE_3, 0);    /* 12, etwas mehr Luft */
     lv_obj_clear_flag(toolbar, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(toolbar, LV_OBJ_FLAG_CLICKABLE);
     s_toolbar = toolbar;
 
-    /* Status-Label "Klingelt   <DoorName>". UI_FONT_XL = 22 px Montserrat.
-     * Sekundaer-Text-Opa (62 %). Mittig (Flex-Container alignt center). */
+    /* Status-Label "Klingelt   <DoorName>". UI_FONT_LG = 18 px Montserrat
+     * (S5-17 dezenter, war 22). Sekundaer-Text-Opa (62 %). Mittig. */
     lv_obj_t *status = lv_label_create(toolbar);
     char buf[96];
     snprintf(buf, sizeof(buf), "Klingelt   %s",
              (data && data->door_name) ? data->door_name : "Hauseingang");
     lv_label_set_text(status, buf);
-    lv_obj_set_style_text_font(status, UI_FONT_XL, 0);
+    lv_obj_set_style_text_font(status, UI_FONT_LG, 0);
     lv_obj_set_style_text_color(status, UI_COLOR_TEXT, 0);
     lv_obj_set_style_text_opa(status, UI_OPA_TEXT_SECONDARY, 0);
     s_status_label = status;
 
-    /* Button-Row: flex row, space-evenly. Hoehe = max-Button-Hoehe (Tuer 144),
-     * kleinere zentrieren vertikal. */
+    /* Button-Row: flex row, space-evenly. Hoehe = max-Button-Hoehe (Tuer 96
+     * nach S5-17 refine), kleinere zentrieren vertikal. */
     lv_obj_t *btn_row = lv_obj_create(toolbar);
     lv_obj_remove_style_all(btn_row);
     lv_obj_set_size(btn_row, lv_pct(100), UI_KLINGEL_BTN_LG);
@@ -179,60 +192,66 @@ lv_obj_t *scr_ringing_build(lv_obj_t *parent, const scr_ringing_data_t *data)
     lv_obj_set_flex_flow(btn_row, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(btn_row, LV_FLEX_ALIGN_SPACE_EVENLY,
                           LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_column(btn_row, UI_SPACE_3, 0);
+    lv_obj_set_style_pad_column(btn_row, UI_SPACE_5, 0); /* 16, mehr Luft */
     lv_obj_clear_flag(btn_row, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(btn_row, LV_OBJ_FLAG_CLICKABLE);
 
-    /* Button 1 LTR: Ignorieren / Stumm (klein, grau/glass). ICON_BELL_OFF
-     * (durchgestrichene Glocke) - per S5-17 Font-Refresh. */
+    /* Button 1 LTR: Ignorieren / Stumm. Klein 56, glas-grau, dezent. */
     kring_btn_style_t st_ignore = {
         .icon = ICON_BELL_OFF, .size = UI_KLINGEL_BTN_SM,
         .bg = UI_COLOR_SURFACE, .bg_opa = UI_OPA_SURFACE_3,
-        .shadow = UI_COLOR_HAIRLINE, .shadow_opa = UI_OPA_HAIRLINE_STRONG,
+        .bg_grad = UI_COLOR_SURFACE, .grad_dir = LV_GRAD_DIR_NONE,
+        .shadow = UI_COLOR_HAIRLINE, .shadow_opa = UI_OPA_HAIRLINE,
         .icon_color = UI_COLOR_TEXT,
-        .icon_scale = 325,    /* 22 -> ~28 px */
+        .icon_scale = 256,    /* 22 px native, kein scale (passt in 56 mit 17 px Luft) */
     };
     s_btn_ignore = build_kring_btn(btn_row, &st_ignore);
 
-    /* Button 2: Annehmen (mittel, gruen). */
+    /* Button 2: Annehmen. Mittel 72, gruen, dezenter Glow. */
     kring_btn_style_t st_accept = {
         .icon = ICON_PHONE, .size = UI_KLINGEL_BTN_MD,
         .bg = UI_COLOR_OK, .bg_opa = LV_OPA_COVER,
-        .shadow = UI_COLOR_OK, .shadow_opa = UI_OPA_OK_GLOW,
+        .bg_grad = UI_COLOR_OK, .grad_dir = LV_GRAD_DIR_NONE,
+        .shadow = UI_COLOR_OK, .shadow_opa = 80,
         .icon_color = UI_COLOR_TEXT,
-        .icon_scale = 465,    /* 22 -> ~40 px */
+        .icon_scale = 325,    /* 22 -> ~28 px */
     };
     s_btn_accept = build_kring_btn(btn_row, &st_accept);
 
-    /* Button 3 (Mitte): Tuer-Oeffnen (gross, primary-blau, PULSIERT). */
+    /* Button 3 (Mitte): Tuer-Oeffnen. Gross 96, primary-blue mit subtilem
+     * Vertikal-Gradient (light-blau oben -> accent-blau unten, wie der
+     * Idle-primary-Button). Klar Haupt-Aktion, aber nicht uebermaechtig.
+     * Statisch (kein Puls - Direct-FB-Anim ist perf-Killer S5-17). */
     kring_btn_style_t st_door = {
         .icon = ICON_LOCK_OPEN, .size = UI_KLINGEL_BTN_LG,
-        .bg = UI_COLOR_ACCENT, .bg_opa = LV_OPA_COVER,
-        .shadow = UI_COLOR_ACCENT, .shadow_opa = UI_OPA_ACCENT_GLOW,
+        .bg = UI_COLOR_ACCENT_LIGHT, .bg_opa = LV_OPA_COVER,
+        .bg_grad = UI_COLOR_ACCENT, .grad_dir = LV_GRAD_DIR_VER,
+        .shadow = UI_COLOR_ACCENT, .shadow_opa = 96,
         .icon_color = UI_COLOR_TEXT_ON_ACCENT,
-        .icon_scale = 700,    /* 22 -> ~60 px */
+        .icon_scale = 415,    /* 22 -> ~36 px */
     };
     s_btn_door = build_kring_btn(btn_row, &st_door);
 
-    /* Button 4: Ablehnen (mittel, rot). */
+    /* Button 4: Ablehnen. Mittel 72, rot, dezenter Glow. */
     kring_btn_style_t st_reject = {
         .icon = ICON_X, .size = UI_KLINGEL_BTN_MD,
         .bg = UI_COLOR_DANGER, .bg_opa = LV_OPA_COVER,
-        .shadow = UI_COLOR_DANGER, .shadow_opa = UI_OPA_DANGER_GLOW,
+        .bg_grad = UI_COLOR_DANGER, .grad_dir = LV_GRAD_DIR_NONE,
+        .shadow = UI_COLOR_DANGER, .shadow_opa = 80,
         .icon_color = UI_COLOR_TEXT,
-        .icon_scale = 465,
+        .icon_scale = 325,
     };
     s_btn_reject = build_kring_btn(btn_row, &st_reject);
 
-    /* Button 5 LTR: Record (klein, rot). ICON_CIRCLE (weisser gefuellter
-     * Kreis auf rotem Button) - klassischer Record-Look, per S5-17
-     * Font-Refresh. */
+    /* Button 5 LTR: Record. Klein 56, rot, ICON_CIRCLE (weisser
+     * gefuellter Kreis = klassischer Record-Look). Sehr dezent. */
     kring_btn_style_t st_record = {
         .icon = ICON_CIRCLE, .size = UI_KLINGEL_BTN_SM,
         .bg = UI_COLOR_DANGER, .bg_opa = LV_OPA_COVER,
-        .shadow = UI_COLOR_DANGER, .shadow_opa = UI_OPA_DANGER_GLOW,
+        .bg_grad = UI_COLOR_DANGER, .grad_dir = LV_GRAD_DIR_NONE,
+        .shadow = UI_COLOR_DANGER, .shadow_opa = 64,
         .icon_color = UI_COLOR_TEXT,
-        .icon_scale = 325,    /* 22 -> ~28 px, kleiner gefuellter Kreis */
+        .icon_scale = 256,    /* 22 px native, klein gefuellter Kreis */
     };
     s_btn_record = build_kring_btn(btn_row, &st_record);
 

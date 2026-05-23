@@ -284,19 +284,23 @@ extern "C" {
  * Im Klingel-Modus wird der Stream Vollbreite von y=0 bis y=(SCREEN_H -
  * KLINGEL_TOOLBAR_H) gezeichnet (kein UI-Overlay ueber dem Stream mehr -
  * der PPA-Overlay-Pfad hat in S5-08..S5-15 wegen LVGL-Doppel-Render
- * gescheitert). Die Toolbar liegt im "sicheren" Bereich y >= 1080 wo
- * der Stream nicht hinschreibt - reines LVGL, stabil wie die Topbar.
+ * gescheitert). Die Toolbar liegt im "sicheren" Bereich wo der Stream
+ * nicht hinschreibt - reines LVGL, stabil wie die Topbar.
  *
- *   Stream-Region (Klingel):  y =    0 .. 1080  (1080 hoch, Vollbreite)
- *   Klingel-Toolbar:          y = 1080 .. 1280  (KLINGEL_TOOLBAR_H = 200)
+ * S5-17 Refine: Buttons schlanker (war 144/104/72 = wuchtig), Toolbar
+ * kompakter (war 200), mehr Luft im Layout, dezentere Schatten, Tuer
+ * mit subtilem Gradient. Edel statt reingeklatscht.
  *
- * Layout in der Toolbar (LTR, 5 Buttons + 1-Zeile Status-Label):
- *   [Ignorieren(72)]  [Annehmen(104)]  [Tuer(144,pulsierend)]  [Ablehnen(104)]  [Record(72)]
+ *   Stream-Region (Klingel):  y =    0 .. 1110  (1110 hoch, Vollbreite)
+ *   Klingel-Toolbar:          y = 1110 .. 1280  (KLINGEL_TOOLBAR_H = 170)
+ *
+ * Layout (LTR, 5 Buttons + 1-Zeile Status-Label, Tuer statisch, S5-17):
+ *   [Ignorieren(56)]  [Annehmen(72)]  [Tuer(96)]  [Ablehnen(72)]  [Record(56)]
  */
-#define UI_KLINGEL_TOOLBAR_H      200
-#define UI_KLINGEL_BTN_LG         144   /* Tuer (gross + pulse) */
-#define UI_KLINGEL_BTN_MD         104   /* Annehmen + Ablehnen */
-#define UI_KLINGEL_BTN_SM         72    /* Ignorieren + Record */
+#define UI_KLINGEL_TOOLBAR_H      170
+#define UI_KLINGEL_BTN_LG         96    /* Tuer (gross, primary-grad) */
+#define UI_KLINGEL_BTN_MD         72    /* Annehmen + Ablehnen */
+#define UI_KLINGEL_BTN_SM         56    /* Ignorieren + Record */
 
 /* Action-Buttons (Idle bottom bar) */
 #define UI_ACTION_BTN_SIZE        52

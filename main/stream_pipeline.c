@@ -177,9 +177,10 @@ static const char *TAG = "STREAM";
  * y=(STREAM_H - KLINGEL_TOOLBAR_H). Darunter liegt die Klingel-Toolbar
  * (LVGL, scr_ringing). Single Source of Truth ist UI_KLINGEL_TOOLBAR_H
  * in ui_tokens.h - hier doppelt deklariert weil stream_pipeline.c
- * keine UI-Tokens included. Bei Aenderung beide Werte synchronisieren. */
-#define KLINGEL_TOOLBAR_H  200
-#define KLINGEL_STREAM_H   (STREAM_H - KLINGEL_TOOLBAR_H)            /* 1080 */
+ * keine UI-Tokens included. Bei Aenderung beide Werte synchronisieren.
+ * S5-17: von 200 auf 170 reduziert (kompaktere Toolbar, mehr Video). */
+#define KLINGEL_TOOLBAR_H  170
+#define KLINGEL_STREAM_H   (STREAM_H - KLINGEL_TOOLBAR_H)            /* 1110 */
 
 /* JPEG input + decode-output buffers */
 static uint8_t *s_jpeg_buf = NULL;
@@ -712,9 +713,9 @@ static void mjpeg_task(void *arg)
                  *                  Action-Bar bleiben sichtbar)
                  *   fullscreen=true (S5-16 Plan B, Klingel):
                  *     X: 0..800   (voll-breit, Topbar weg)
-                 *     Y: 0..1080  (KLINGEL_STREAM_H, oben+rechts/links bis
+                 *     Y: 0..1110  (KLINGEL_STREAM_H, oben+rechts/links bis
                  *                  zur Oberkante der Klingel-Toolbar)
-                 *     Toolbar-Bereich y=1080..1280 (200 px) NICHT vom Stream
+                 *     Toolbar-Bereich y=1110..1280 (170 px) NICHT vom Stream
                  *     beschrieben - dort liegt die LVGL-Klingel-Toolbar
                  *     (scr_ringing) im "sicheren" Bereich, kein Doppel-
                  *     Render-Konflikt wie beim alten PPA-UI-Overlay.
