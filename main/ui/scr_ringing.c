@@ -1,26 +1,28 @@
 /*
- * scr_ringing.c - Klingel-Screen (S5-16 Plan B: Toolbar unten, kein
- * UI-Overlay ueber dem Stream).
+ * scr_ringing.c - Klingel-Screen (S5-18 Apple-Style: Header oben +
+ * Toolbar unten, beide im sicheren Bereich, kein PPA-Overlay).
  *
- * Layout (waehrend Klingelns, S5-17 refined):
- *   y =    0..1110   Stream Vollbreite (stream_pipeline fullscreen=true,
- *                    KLINGEL_STREAM_H = STREAM_H - KLINGEL_TOOLBAR_H)
- *   y = 1110..1280   Klingel-Toolbar (LVGL, im "sicheren" Bereich den
- *                    der Stream nicht beschreibt - kein Doppel-Render
- *                    wie beim alten PPA-Overlay-Versuch S5-08..S5-15)
+ * Layout (waehrend Klingelns):
+ *   y =    0..88     Klingel-Header (UI_KLINGEL_HEADER_H = 88, LVGL,
+ *                    "Es klingelt - <DoorName>" gross zentriert)
+ *   y =   88..1140   Stream Vollbreite (KLINGEL_VIDEO_H = 1052,
+ *                    zwischen Header und Toolbar)
+ *   y = 1140..1280   Klingel-Toolbar (UI_KLINGEL_TOOLBAR_H = 140, LVGL,
+ *                    5 Buttons - Mittelgruppe eng, Aussen-Buttons abgesetzt)
  *
- * Toolbar (5 Buttons + 1-Zeile Status-Label, LTR):
+ * Header + Toolbar liegen in sicheren Bereichen die der Stream nicht
+ * beschreibt - kein Doppel-Render-Konflikt wie beim alten PPA-Overlay-
+ * Versuch S5-08..S5-15. Reines LVGL, stabil wie die Idle-Topbar.
  *
- *  Klingelt   Hauseingang                       (UI_FONT_LG, secondary opa)
- *  [Ignorieren] [Annehmen] [TUER (primary)] [Ablehnen] [Record]
- *       56          72           96             72         56
- *  glass-grau   gruen      blue-gradient    rot       rot-mit-circle
+ * Buttons (S5-18, LTR mit Mittelgruppe + abgesetzten Aussen):
+ *  [Ignorieren]  ........  [Annehmen] [TUER] [Ablehnen]  ........  [Record]
+ *       56                      72       96       72                    56
+ *   glas-grau                gruen   primary   rot                 rot+circle
+ *  ICON_BELL_OFF          ICON_PHONE  ICON_LOCK_OPEN  ICON_X     ICON_CIRCLE
  *
- * Hauptaktion (Tuer-Auf, mittig+gross) ist STATISCH (S5-17). Der bg_opa-
- * Puls aus S5-16 hat im Direct-FB-Setup die fps auf ~4 gedrueckt - keine
- * kontinuierlichen LVGL-Animationen mehr in der Toolbar. Tuer-Button
- * unterscheidet sich visuell durch subtilen Vertikal-Gradient (light-
- * blau oben -> accent-blau unten), nicht durch Bewegung.
+ * Hauptaktion (Tuer-Auf, mittig+gross) ist STATISCH (S5-17). Keine
+ * kontinuierlichen LVGL-Animationen in der Toolbar - Direct-FB-Setup
+ * vertraegt sie nicht (fps-Killer).
  *
  * Stufe 1 verdraht Tuer/Annehmen/Ablehnen wie heute via main.c-Setters.
  * Ignorieren + Record sind aktive Buttons mit Stub-Handlern - Funktion
@@ -47,8 +49,9 @@ static const char *TAG = "SCRRING";
  * scr_ringing_set_*_handler setters + scr_ringing_show/hide.
  */
 static lv_obj_t *s_overlay      = NULL;
+static lv_obj_t *s_header       = NULL;   /* S5-18: obere Status-Bar */
+static lv_obj_t *s_status_label = NULL;   /* "Es klingelt - <DoorName>" im Header */
 static lv_obj_t *s_toolbar      = NULL;
-static lv_obj_t *s_status_label = NULL;
 static lv_obj_t *s_btn_ignore   = NULL;
 static lv_obj_t *s_btn_accept   = NULL;
 static lv_obj_t *s_btn_door     = NULL;
@@ -143,10 +146,40 @@ lv_obj_t *scr_ringing_build(lv_obj_t *parent, const scr_ringing_data_t *data)
     lv_obj_clear_flag(overlay, LV_OBJ_FLAG_CLICKABLE);
     s_overlay = overlay;
 
-    /* Toolbar bottom 170 px (S5-17 refined). Opaker dunkler Hintergrund
-     * (anthrazit) mit sehr dezenter Hairline-Border oben + abgerundeten
-     * oberen Ecken (iPad-Stil). clip_corner damit Buttons innerhalb der
-     * Toolbar nicht ueber die runden Ecken hinaus rendern. */
+    /* S5-18 Klingel-Header oben (88 px, sicherer Bereich). Idle-Topbar-
+     * Stil: dunkler opaker Hintergrund, feine Hairline-Border unten.
+     * Eine grosse Status-Zeile zentriert: "Es klingelt - <DoorName>".
+     * Stream beruehrt y<88 nicht -> kein Doppel-Render-Konflikt. */
+    lv_obj_t *header = lv_obj_create(overlay);
+    lv_obj_remove_style_all(header);
+    lv_obj_set_size(header, UI_SCREEN_W, UI_KLINGEL_HEADER_H);
+    lv_obj_align(header, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_bg_color(header, UI_COLOR_BG_ELEV, 0);
+    lv_obj_set_style_bg_opa(header, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(header, UI_COLOR_HAIRLINE, 0);
+    lv_obj_set_style_border_opa(header, UI_OPA_HAIRLINE, 0);
+    lv_obj_set_style_border_width(header, 1, 0);
+    lv_obj_set_style_border_side(header, LV_BORDER_SIDE_BOTTOM, 0);
+    lv_obj_set_style_pad_all(header, 0, 0);
+    lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(header, LV_OBJ_FLAG_CLICKABLE);
+    s_header = header;
+
+    lv_obj_t *status = lv_label_create(header);
+    char buf[96];
+    snprintf(buf, sizeof(buf), "Es klingelt   %s",
+             (data && data->door_name) ? data->door_name : "Hauseingang");
+    lv_label_set_text(status, buf);
+    lv_obj_set_style_text_font(status, UI_FONT_3XL, 0);     /* 26 px */
+    lv_obj_set_style_text_color(status, UI_COLOR_TEXT, 0);
+    lv_obj_set_style_text_opa(status, UI_OPA_TEXT, 0);
+    lv_obj_center(status);
+    s_status_label = status;
+
+    /* S5-18 Klingel-Toolbar unten (140 px, sicherer Bereich). Dunkler
+     * opaker Hintergrund, feine Hairline oben. Keine runden Ecken (mit
+     * Header oben + Toolbar unten ist es ein klares Top/Bottom-Frame
+     * um das Video - Apple-flat). */
     lv_obj_t *toolbar = lv_obj_create(overlay);
     lv_obj_remove_style_all(toolbar);
     lv_obj_set_size(toolbar, UI_SCREEN_W, UI_KLINGEL_TOOLBAR_H);
@@ -157,33 +190,14 @@ lv_obj_t *scr_ringing_build(lv_obj_t *parent, const scr_ringing_data_t *data)
     lv_obj_set_style_border_opa(toolbar, UI_OPA_HAIRLINE, 0);
     lv_obj_set_style_border_width(toolbar, 1, 0);
     lv_obj_set_style_border_side(toolbar, LV_BORDER_SIDE_TOP, 0);
-    lv_obj_set_style_radius(toolbar, UI_RADIUS_2XL, 0);
-    lv_obj_set_style_clip_corner(toolbar, true, 0);
-    lv_obj_set_style_pad_top(toolbar, UI_SPACE_3, 0);    /* 12 */
-    lv_obj_set_style_pad_bottom(toolbar, UI_SPACE_5, 0); /* 16 */
-    lv_obj_set_style_pad_hor(toolbar, UI_SPACE_5, 0);    /* 16 */
-    lv_obj_set_flex_flow(toolbar, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(toolbar, LV_FLEX_ALIGN_START,
-                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_row(toolbar, UI_SPACE_3, 0);    /* 12, etwas mehr Luft */
+    lv_obj_set_style_pad_ver(toolbar, UI_SPACE_5, 0);   /* 16 oben+unten */
+    lv_obj_set_style_pad_hor(toolbar, UI_SPACE_7, 0);   /* 24 Seitenrand */
     lv_obj_clear_flag(toolbar, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(toolbar, LV_OBJ_FLAG_CLICKABLE);
     s_toolbar = toolbar;
 
-    /* Status-Label "Klingelt   <DoorName>". UI_FONT_LG = 18 px Montserrat
-     * (S5-17 dezenter, war 22). Sekundaer-Text-Opa (62 %). Mittig. */
-    lv_obj_t *status = lv_label_create(toolbar);
-    char buf[96];
-    snprintf(buf, sizeof(buf), "Klingelt   %s",
-             (data && data->door_name) ? data->door_name : "Hauseingang");
-    lv_label_set_text(status, buf);
-    lv_obj_set_style_text_font(status, UI_FONT_LG, 0);
-    lv_obj_set_style_text_color(status, UI_COLOR_TEXT, 0);
-    lv_obj_set_style_text_opa(status, UI_OPA_TEXT_SECONDARY, 0);
-    s_status_label = status;
-
-    /* Button-Row: flex row, space-evenly. Hoehe = max-Button-Hoehe (Tuer 96
-     * nach S5-17 refine), kleinere zentrieren vertikal. */
+    /* Button-Row: flex row, space-evenly. Hoehe = max-Button-Hoehe (Tuer 96),
+     * kleinere zentrieren vertikal. (Regrouping in S5-18 C2 folgt.) */
     lv_obj_t *btn_row = lv_obj_create(toolbar);
     lv_obj_remove_style_all(btn_row);
     lv_obj_set_size(btn_row, lv_pct(100), UI_KLINGEL_BTN_LG);
@@ -192,7 +206,7 @@ lv_obj_t *scr_ringing_build(lv_obj_t *parent, const scr_ringing_data_t *data)
     lv_obj_set_flex_flow(btn_row, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(btn_row, LV_FLEX_ALIGN_SPACE_EVENLY,
                           LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_column(btn_row, UI_SPACE_5, 0); /* 16, mehr Luft */
+    lv_obj_set_style_pad_column(btn_row, UI_SPACE_5, 0); /* 16 */
     lv_obj_clear_flag(btn_row, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(btn_row, LV_OBJ_FLAG_CLICKABLE);
 
@@ -312,7 +326,7 @@ void scr_ringing_set_door_name(const char *door_name)
 {
     if (!s_status_label || !door_name) return;
     char buf[96];
-    snprintf(buf, sizeof(buf), "Klingelt   %s", door_name);
+    snprintf(buf, sizeof(buf), "Es klingelt   %s", door_name);
     lv_label_set_text(s_status_label, buf);
 }
 

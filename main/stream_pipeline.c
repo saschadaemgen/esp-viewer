@@ -173,14 +173,22 @@ static const char *TAG = "STREAM";
 #define STREAM_X_PAD       14   /* UI_SCREEN_PAD: Idle-Seiten-Border */
 #define STREAM_REGION_W    (STREAM_W - 2 * STREAM_X_PAD)           /* 772 */
 
-/* S5-16 Klingel-Mode: Stream Vollbreite x=0..800, von oben y=0 bis
- * y=(STREAM_H - KLINGEL_TOOLBAR_H). Darunter liegt die Klingel-Toolbar
- * (LVGL, scr_ringing). Single Source of Truth ist UI_KLINGEL_TOOLBAR_H
- * in ui_tokens.h - hier doppelt deklariert weil stream_pipeline.c
- * keine UI-Tokens included. Bei Aenderung beide Werte synchronisieren.
- * S5-17: von 200 auf 170 reduziert (kompaktere Toolbar, mehr Video). */
-#define KLINGEL_TOOLBAR_H  170
-#define KLINGEL_STREAM_H   (STREAM_H - KLINGEL_TOOLBAR_H)            /* 1110 */
+/* S5-16/S5-18 Klingel-Mode: Stream Vollbreite x=0..800, mit Header
+ * oben + Toolbar unten in den sicheren UI-Bereichen (vom Stream nicht
+ * beschrieben). Single Source of Truth ist ui_tokens.h - hier doppelt
+ * deklariert weil stream_pipeline.c keine UI-Tokens included. Bei
+ * Aenderung beide Werte synchronisieren.
+ *
+ *   y =    0 ..   88   KLINGEL_HEADER_H  (LVGL Klingel-Header-Bar)
+ *   y =   88 .. 1140   Stream-Video      (KLINGEL_VIDEO_H = 1052)
+ *   y = 1140 .. 1280   KLINGEL_TOOLBAR_H (LVGL Klingel-Toolbar)
+ *
+ * Video wird zentriert v-cropt: aus dem 800x1280 Decoder-Buffer kopieren
+ * wir die mittleren 1052 Zeilen (KLINGEL_SRC_ROW0=114) in den FB ab y=88. */
+#define KLINGEL_HEADER_H   88
+#define KLINGEL_TOOLBAR_H  140
+#define KLINGEL_VIDEO_H    (STREAM_H - KLINGEL_HEADER_H - KLINGEL_TOOLBAR_H)  /* 1052 */
+#define KLINGEL_SRC_ROW0   ((STREAM_H - KLINGEL_VIDEO_H) / 2)                /* 114 */
 
 /* JPEG input + decode-output buffers */
 static uint8_t *s_jpeg_buf = NULL;
@@ -711,31 +719,26 @@ static void mjpeg_task(void *arg)
                  *                 links + rechts bleibt sichtbar)
                  *     Y: 88..1160 (1072 hoch, Stream-Window, LVGL Topbar +
                  *                  Action-Bar bleiben sichtbar)
-                 *   fullscreen=true (S5-16 Plan B, Klingel):
-                 *     X: 0..800   (voll-breit, Topbar weg)
-                 *     Y: 0..1110  (KLINGEL_STREAM_H, oben+rechts/links bis
-                 *                  zur Oberkante der Klingel-Toolbar)
-                 *     Toolbar-Bereich y=1110..1280 (170 px) NICHT vom Stream
-                 *     beschrieben - dort liegt die LVGL-Klingel-Toolbar
-                 *     (scr_ringing) im "sicheren" Bereich, kein Doppel-
-                 *     Render-Konflikt wie beim alten PPA-UI-Overlay.
-                 *
-                 * Im fullscreen-Mode wird die Topbar-Region (LVGL, y=14..78)
-                 * vom Stream uebermalt. scr_ringing_show versteckt die
-                 * LVGL-Chrome (Topbar, Design-Frame, Idle-Action-Bar)
-                 * bevor fullscreen=true gesetzt wird.
+                 *   fullscreen=true (S5-18 Klingel):
+                 *     X: 0..800   (voll-breit)
+                 *     Y: 88..1140 (KLINGEL_VIDEO_H=1052 hoch, zwischen
+                 *                  oberer Klingel-Header-Bar [0..88] und
+                 *                  unterer Klingel-Toolbar [1140..1280])
+                 *     Header- + Toolbar-Bereich NICHT vom Stream beschrieben
+                 *     - dort liegt die LVGL-Klingel-UI im "sicheren" Bereich,
+                 *     kein Doppel-Render-Konflikt.
                  *
                  * Snapshot des Toggle in lokale Variable damit ein gleichzeitiger
                  * set_fullscreen-Call (anderer Task) nicht mitten in der
                  * Frame-Bearbeitung die Geometrie unter uns aendert.
                  */
                 const bool   fs          = s_stream_fullscreen;
-                const size_t copy_src_x  = fs ? 0u            : (size_t)STREAM_X_PAD;
-                const size_t copy_src_y  = fs ? 0u            : (size_t)STREAM_SRC_ROW0;
-                const size_t copy_dst_x  = fs ? 0u            : (size_t)STREAM_X_PAD;
-                const size_t copy_dst_y  = fs ? 0u            : (size_t)STREAM_Y_TOP;
-                const size_t copy_width  = fs ? (size_t)STREAM_W       : (size_t)STREAM_REGION_W;
-                const size_t copy_height = fs ? (size_t)KLINGEL_STREAM_H : (size_t)STREAM_REGION_H;
+                const size_t copy_src_x  = fs ? 0u                       : (size_t)STREAM_X_PAD;
+                const size_t copy_src_y  = fs ? (size_t)KLINGEL_SRC_ROW0 : (size_t)STREAM_SRC_ROW0;
+                const size_t copy_dst_x  = fs ? 0u                       : (size_t)STREAM_X_PAD;
+                const size_t copy_dst_y  = fs ? (size_t)KLINGEL_HEADER_H : (size_t)STREAM_Y_TOP;
+                const size_t copy_width  = fs ? (size_t)STREAM_W         : (size_t)STREAM_REGION_W;
+                const size_t copy_height = fs ? (size_t)KLINGEL_VIDEO_H  : (size_t)STREAM_REGION_H;
 
                 esp_async_fbcpy_trans_desc_t cfg = {
                     .src_buffer = s_stream_buf,

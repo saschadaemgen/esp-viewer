@@ -279,26 +279,28 @@ extern "C" {
 #define UI_RING_BTN_SIZE          143
 #define UI_RING_BTN_ICON          64
 
-/* S5-16 Plan B: Klingel-UI als untere Toolbar.
+/* S5-16/S5-18 Plan B: Klingel-UI als obere Status-Bar + untere Toolbar.
  *
- * Im Klingel-Modus wird der Stream Vollbreite von y=0 bis y=(SCREEN_H -
- * KLINGEL_TOOLBAR_H) gezeichnet (kein UI-Overlay ueber dem Stream mehr -
- * der PPA-Overlay-Pfad hat in S5-08..S5-15 wegen LVGL-Doppel-Render
- * gescheitert). Die Toolbar liegt im "sicheren" Bereich wo der Stream
- * nicht hinschreibt - reines LVGL, stabil wie die Topbar.
+ * Im Klingel-Modus liegen UI-Elemente AUSSERHALB der Stream-Region:
+ * oben eine Status-Bar (88 px), unten eine Button-Toolbar (140 px),
+ * Stream nur dazwischen. Beide UI-Bereiche reines LVGL im sicheren
+ * Bereich - kein Doppel-Render-Konflikt mit Stream (der PPA-Overlay-
+ * Pfad hat in S5-08..S5-15 wegen LVGL-Doppel-Render gescheitert).
  *
- * S5-17 Refine: Buttons schlanker (war 144/104/72 = wuchtig), Toolbar
- * kompakter (war 200), mehr Luft im Layout, dezentere Schatten, Tuer
- * mit subtilem Gradient. Edel statt reingeklatscht.
+ *   Klingel-Header:           y =    0 ..   88  (UI_KLINGEL_HEADER_H = 88)
+ *   Stream (Klingel-Video):   y =   88 .. 1140  (1052 hoch, Vollbreite)
+ *   Klingel-Toolbar:          y = 1140 .. 1280  (UI_KLINGEL_TOOLBAR_H = 140)
  *
- *   Stream-Region (Klingel):  y =    0 .. 1110  (1110 hoch, Vollbreite)
- *   Klingel-Toolbar:          y = 1110 .. 1280  (KLINGEL_TOOLBAR_H = 170)
- *
- * Layout (LTR, 5 Buttons + 1-Zeile Status-Label, Tuer statisch, S5-17):
- *   [Ignorieren(56)]  [Annehmen(72)]  [Tuer(96)]  [Ablehnen(72)]  [Record(56)]
+ * S5-18 Apple-Style:
+ * - Status oben in der Header-Bar (gross, im Stil der Idle-Topbar)
+ * - Untere Toolbar: Mittelgruppe (Annehmen/Tuer/Ablehnen) eng zusammen,
+ *   Ignorieren + Record weit aussen abgesetzt
+ * - Flach + opak, viel Schwarz, feine Hairlines, dezente Akzente
+ * - KEINE Animation (Direct-FB-Perf, S5-17 bewiesen)
  */
-#define UI_KLINGEL_TOOLBAR_H      170
-#define UI_KLINGEL_BTN_LG         96    /* Tuer (gross, primary-grad) */
+#define UI_KLINGEL_HEADER_H       88    /* Obere Status-Bar */
+#define UI_KLINGEL_TOOLBAR_H      140   /* Untere Button-Bar */
+#define UI_KLINGEL_BTN_LG         96    /* Tuer (gross, primary) */
 #define UI_KLINGEL_BTN_MD         72    /* Annehmen + Ablehnen */
 #define UI_KLINGEL_BTN_SM         56    /* Ignorieren + Record */
 
