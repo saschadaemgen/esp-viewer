@@ -196,32 +196,50 @@ lv_obj_t *scr_ringing_build(lv_obj_t *parent, const scr_ringing_data_t *data)
     lv_obj_clear_flag(toolbar, LV_OBJ_FLAG_CLICKABLE);
     s_toolbar = toolbar;
 
-    /* Button-Row: flex row, space-evenly. Hoehe = max-Button-Hoehe (Tuer 96),
-     * kleinere zentrieren vertikal. (Regrouping in S5-18 C2 folgt.) */
+    /* Button-Row: flex row, space-between (S5-18 C2 regroup). Drei
+     * children: Ignorieren (links), center_group (Annehmen/Tuer/Ablehnen
+     * eng zusammen, Mitte), Record (rechts). Die zentrale 3er-Gruppe
+     * bekommt eigene flex-row mit kleinem pad_column = visuell als eine
+     * Gruppe; Ignorieren + Record sitzen weit aussen abgesetzt. */
     lv_obj_t *btn_row = lv_obj_create(toolbar);
     lv_obj_remove_style_all(btn_row);
     lv_obj_set_size(btn_row, lv_pct(100), UI_KLINGEL_BTN_LG);
     lv_obj_set_style_bg_opa(btn_row, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(btn_row, 0, 0);
     lv_obj_set_flex_flow(btn_row, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(btn_row, LV_FLEX_ALIGN_SPACE_EVENLY,
+    lv_obj_set_flex_align(btn_row, LV_FLEX_ALIGN_SPACE_BETWEEN,
                           LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_column(btn_row, UI_SPACE_5, 0); /* 16 */
+    lv_obj_set_style_pad_column(btn_row, 0, 0);
     lv_obj_clear_flag(btn_row, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(btn_row, LV_OBJ_FLAG_CLICKABLE);
 
-    /* Button 1 LTR: Ignorieren / Stumm. Klein 56, glas-grau, dezent. */
+    /* Child 1 (links aussen): Ignorieren / Stumm. */
     kring_btn_style_t st_ignore = {
         .icon = ICON_BELL_OFF, .size = UI_KLINGEL_BTN_SM,
         .bg = UI_COLOR_SURFACE, .bg_opa = UI_OPA_SURFACE_3,
         .bg_grad = UI_COLOR_SURFACE, .grad_dir = LV_GRAD_DIR_NONE,
         .shadow = UI_COLOR_HAIRLINE, .shadow_opa = UI_OPA_HAIRLINE,
         .icon_color = UI_COLOR_TEXT,
-        .icon_scale = 256,    /* 22 px native, kein scale (passt in 56 mit 17 px Luft) */
+        .icon_scale = 256,    /* 22 px native */
     };
     s_btn_ignore = build_kring_btn(btn_row, &st_ignore);
 
-    /* Button 2: Annehmen. Mittel 72, gruen, dezenter Glow. */
+    /* Child 2 (Mitte): Hauptgruppe Annehmen/Tuer/Ablehnen eng beieinander
+     * als eigener sub-flex-row Container. LV_SIZE_CONTENT = Container
+     * passt sich an die Buttons-Breite an. */
+    lv_obj_t *center_group = lv_obj_create(btn_row);
+    lv_obj_remove_style_all(center_group);
+    lv_obj_set_size(center_group, LV_SIZE_CONTENT, UI_KLINGEL_BTN_LG);
+    lv_obj_set_style_bg_opa(center_group, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(center_group, 0, 0);
+    lv_obj_set_flex_flow(center_group, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(center_group, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(center_group, UI_SPACE_3, 0); /* 12, eng */
+    lv_obj_clear_flag(center_group, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(center_group, LV_OBJ_FLAG_CLICKABLE);
+
+    /* Annehmen (links der Tuer, mittel 72, gruen, dezenter Glow). */
     kring_btn_style_t st_accept = {
         .icon = ICON_PHONE, .size = UI_KLINGEL_BTN_MD,
         .bg = UI_COLOR_OK, .bg_opa = LV_OPA_COVER,
@@ -230,12 +248,9 @@ lv_obj_t *scr_ringing_build(lv_obj_t *parent, const scr_ringing_data_t *data)
         .icon_color = UI_COLOR_TEXT,
         .icon_scale = 325,    /* 22 -> ~28 px */
     };
-    s_btn_accept = build_kring_btn(btn_row, &st_accept);
+    s_btn_accept = build_kring_btn(center_group, &st_accept);
 
-    /* Button 3 (Mitte): Tuer-Oeffnen. Gross 96, primary-blue mit subtilem
-     * Vertikal-Gradient (light-blau oben -> accent-blau unten, wie der
-     * Idle-primary-Button). Klar Haupt-Aktion, aber nicht uebermaechtig.
-     * Statisch (kein Puls - Direct-FB-Anim ist perf-Killer S5-17). */
+    /* Tuer (mittig, gross 96, primary-blue mit Vertikal-Gradient). */
     kring_btn_style_t st_door = {
         .icon = ICON_LOCK_OPEN, .size = UI_KLINGEL_BTN_LG,
         .bg = UI_COLOR_ACCENT_LIGHT, .bg_opa = LV_OPA_COVER,
@@ -244,9 +259,9 @@ lv_obj_t *scr_ringing_build(lv_obj_t *parent, const scr_ringing_data_t *data)
         .icon_color = UI_COLOR_TEXT_ON_ACCENT,
         .icon_scale = 415,    /* 22 -> ~36 px */
     };
-    s_btn_door = build_kring_btn(btn_row, &st_door);
+    s_btn_door = build_kring_btn(center_group, &st_door);
 
-    /* Button 4: Ablehnen. Mittel 72, rot, dezenter Glow. */
+    /* Ablehnen (rechts der Tuer, mittel 72, rot, dezenter Glow). */
     kring_btn_style_t st_reject = {
         .icon = ICON_X, .size = UI_KLINGEL_BTN_MD,
         .bg = UI_COLOR_DANGER, .bg_opa = LV_OPA_COVER,
@@ -255,17 +270,16 @@ lv_obj_t *scr_ringing_build(lv_obj_t *parent, const scr_ringing_data_t *data)
         .icon_color = UI_COLOR_TEXT,
         .icon_scale = 325,
     };
-    s_btn_reject = build_kring_btn(btn_row, &st_reject);
+    s_btn_reject = build_kring_btn(center_group, &st_reject);
 
-    /* Button 5 LTR: Record. Klein 56, rot, ICON_CIRCLE (weisser
-     * gefuellter Kreis = klassischer Record-Look). Sehr dezent. */
+    /* Child 3 (rechts aussen): Record. */
     kring_btn_style_t st_record = {
         .icon = ICON_CIRCLE, .size = UI_KLINGEL_BTN_SM,
         .bg = UI_COLOR_DANGER, .bg_opa = LV_OPA_COVER,
         .bg_grad = UI_COLOR_DANGER, .grad_dir = LV_GRAD_DIR_NONE,
         .shadow = UI_COLOR_DANGER, .shadow_opa = 64,
         .icon_color = UI_COLOR_TEXT,
-        .icon_scale = 256,    /* 22 px native, klein gefuellter Kreis */
+        .icon_scale = 256,
     };
     s_btn_record = build_kring_btn(btn_row, &st_record);
 
