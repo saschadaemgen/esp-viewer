@@ -142,26 +142,36 @@ static const char *TAG = "STREAM";
  *   y = 1170..1266  UI_ACTIONS_H=96     (LVGL Action-Bar, kein Stream)
  *   y = 1266..1280  UI_SCREEN_PAD
  *
- * Horizontal: voll-breit 0..800 (kein x-Crop, kein Stride-Repack).
- * Die 14px screen-bg-Pads links/rechts werden vom Stream uebermalt -
- * Teil B (S5-04) legt ein LVGL-Frame-Overlay drueber das die anthrazit-
- * Raender + runden Ecken zurueckholt.
+ * Horizontal (Default, cropped/Idle-Mode, S5-11):
+ *   x =   0..14   UI_SCREEN_PAD (LVGL Design-Frame-Border links)
+ *   x =  14..786  Stream-Region (772 Pixel breit)
+ *   x = 786..800  UI_SCREEN_PAD (LVGL Design-Frame-Border rechts)
+ * Bis S5-10 war x voll-breit (0..800), was die seitlichen Design-Frame-
+ * Border-Pixel beim Stream-Copy uebermalte - LVGL muesste sie pro Frame
+ * neu malen (machte es nicht). Seit S5-11 cropt Stream den 14px-Pad
+ * weg, Border bleibt sichtbar.
+ *
+ * Im fullscreen-Mode (Klingel, S5-10) wird die x-Crop UEBERSPRUNGEN -
+ * dort darf Stream den ganzen Display fuellen weil die Idle-Chrome eh
+ * versteckt ist.
  *
  * Source-Pointer-Offset fuer vertical-crop des 800x1280-Decoder-Buffers:
  *   STREAM_SRC_ROW0 = (1280 - 1072) / 2 = 104  (zentrierter v-crop)
  *   STREAM_SRC_OFFSET = 104 * 800 * 2 = 166400 Bytes
  *
- * Decoder schreibt das volle 800x1280 in s_stream_buf. draw_bitmap
- * liest 800 * 1072 RGB565-Pixel linear ab (s_stream_buf + OFFSET).
+ * Decoder schreibt das volle 800x1280 in s_stream_buf. fbcpy liest
+ * den jeweils richtigen Sub-Bereich (siehe fs/!fs-Branching in mjpeg).
  */
-#define STREAM_W          800
-#define STREAM_H          1280
-#define STREAM_BPP        2   /* RGB565 = 2 Bytes/Pixel */
-#define STREAM_Y_TOP      88
-#define STREAM_Y_BOTTOM   1160
-#define STREAM_REGION_H   (STREAM_Y_BOTTOM - STREAM_Y_TOP)        /* 1072 */
-#define STREAM_SRC_ROW0   ((STREAM_H - STREAM_REGION_H) / 2)      /* 104 */
-#define STREAM_SRC_OFFSET (STREAM_SRC_ROW0 * STREAM_W * STREAM_BPP) /* 166400 */
+#define STREAM_W           800
+#define STREAM_H           1280
+#define STREAM_BPP         2   /* RGB565 = 2 Bytes/Pixel */
+#define STREAM_Y_TOP       88
+#define STREAM_Y_BOTTOM    1160
+#define STREAM_REGION_H    (STREAM_Y_BOTTOM - STREAM_Y_TOP)        /* 1072 */
+#define STREAM_SRC_ROW0    ((STREAM_H - STREAM_REGION_H) / 2)      /* 104 */
+#define STREAM_SRC_OFFSET  (STREAM_SRC_ROW0 * STREAM_W * STREAM_BPP) /* 166400 */
+#define STREAM_X_PAD       14   /* UI_SCREEN_PAD: Idle-Seiten-Border */
+#define STREAM_REGION_W    (STREAM_W - 2 * STREAM_X_PAD)           /* 772 */
 
 /* JPEG input + decode-output buffers */
 static uint8_t *s_jpeg_buf = NULL;
@@ -685,16 +695,16 @@ static void mjpeg_task(void *arg)
                 ESP_LOGW(TAG, "fb sync not installed - skipping draw");
             } else if (bsp_display_lock(100)) {
                 /*
-                 * S5-10: Copy-Geometrie haengt am s_stream_fullscreen-Toggle.
+                 * Copy-Geometrie haengt am s_stream_fullscreen-Toggle.
                  *
-                 *   fullscreen=false (Default, Idle):
-                 *     src_offset_y = STREAM_SRC_ROW0 (104, zentrierter v-crop)
-                 *     dst_offset_y = STREAM_Y_TOP (88)
-                 *     copy_size_y  = STREAM_REGION_H (1072) -> nur Fenster-Region
-                 *   fullscreen=true (Klingel):
-                 *     src_offset_y = 0
-                 *     dst_offset_y = 0
-                 *     copy_size_y  = STREAM_H (1280) -> ganzes FB
+                 *   fullscreen=false (S5-11 Default, Idle):
+                 *     X: 14..786 (772 wide, innere Region, LVGL Frame-Border
+                 *                 links + rechts bleibt sichtbar)
+                 *     Y: 88..1160 (1072 hoch, Stream-Window, LVGL Topbar +
+                 *                  Action-Bar bleiben sichtbar)
+                 *   fullscreen=true (S5-10, Klingel):
+                 *     X: 0..800 (voll-breit)
+                 *     Y: 0..1280 (ganzes FB)
                  *
                  * Im fullscreen-Mode wird die Topbar-/Action-Bar-Region (LVGL)
                  * vom Stream uebermalt. Der Caller (scr_ringing_show)
@@ -704,22 +714,25 @@ static void mjpeg_task(void *arg)
                  * set_fullscreen-Call (anderer Task) nicht mitten in der
                  * Frame-Bearbeitung die Geometrie unter uns aendert.
                  */
-                const bool fs = s_stream_fullscreen;
+                const bool   fs          = s_stream_fullscreen;
+                const size_t copy_src_x  = fs ? 0u            : (size_t)STREAM_X_PAD;
                 const size_t copy_src_y  = fs ? 0u            : (size_t)STREAM_SRC_ROW0;
+                const size_t copy_dst_x  = fs ? 0u            : (size_t)STREAM_X_PAD;
                 const size_t copy_dst_y  = fs ? 0u            : (size_t)STREAM_Y_TOP;
+                const size_t copy_width  = fs ? (size_t)STREAM_W : (size_t)STREAM_REGION_W;
                 const size_t copy_height = fs ? (size_t)STREAM_H : (size_t)STREAM_REGION_H;
 
                 esp_async_fbcpy_trans_desc_t cfg = {
                     .src_buffer = s_stream_buf,
                     .src_buffer_size_x = STREAM_W,
                     .src_buffer_size_y = STREAM_H,
-                    .src_offset_x = 0,
+                    .src_offset_x = copy_src_x,
                     .src_offset_y = copy_src_y,
                     .dst_buffer_size_x = STREAM_W,           /* FB ist 800x1280 */
                     .dst_buffer_size_y = STREAM_H,
-                    .dst_offset_x = 0,
+                    .dst_offset_x = copy_dst_x,
                     .dst_offset_y = copy_dst_y,
-                    .copy_size_x = STREAM_W,
+                    .copy_size_x = copy_width,
                     .copy_size_y = copy_height,
                     .pixel_format_unique_id = {
                         .color_type_id = COLOR_TYPE_ID(COLOR_SPACE_RGB, COLOR_PIXEL_RGB565),
