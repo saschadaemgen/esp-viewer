@@ -62,9 +62,17 @@ static lv_obj_t *s_sub_label  = NULL;
  * das UI auf ~1 frame / 4s.
  *
  * Jetzt: schlanker glassmorphic Kreis (cheap fill + 1px-border) mit
- * einer wackelnden Lucide-Glocke drin. Kein Shadow, keine Pulse-Ringe.
- * Wrap dient nur noch als Layout-Wrapper damit der Hero seinen festen
- * Platz in der content-Flex-Spalte bekommt - keine Spezial-Flags noetig. */
+ * einer Lucide-Glocke drin. Kein Shadow, keine Pulse-Ringe. Wrap dient
+ * nur noch als Layout-Wrapper damit der Hero seinen festen Platz in
+ * der content-Flex-Spalte bekommt - keine Spezial-Flags noetig.
+ *
+ * S5-09: Wobble-Aufruf (ui_anim_bell_wobble) ENTFERNT. Die
+ * lv_obj_set_style_transform_rotation-basierte Wackel-Animation hat
+ * im Direct-FB-Setup (S5-04ff) pro Anim-Step ein Vollbild-Software-
+ * Rasterisieren in BEIDE FBs ausgeloest (Geraete-Befund S5-08: 99%
+ * CPU, 1 fps). PPA-Snapshot-Versuch (S5-08 Stufe 2) auch verworfen.
+ * Glocke steht jetzt still. Optionaler performante Pulse/Glow kann
+ * spaeter eingebaut werden (opa- oder color-Anim statt transform). */
 static void build_bell_hero(lv_obj_t *parent)
 {
     lv_obj_t *wrap = lv_obj_create(parent);
@@ -98,7 +106,7 @@ static void build_bell_hero(lv_obj_t *parent)
     lv_obj_set_style_text_color(icon, UI_COLOR_TEXT, 0);
     lv_obj_center(icon);
 
-    ui_anim_bell_wobble(hero);
+    /* S5-09: KEIN ui_anim_bell_wobble(hero). Siehe Header-Block. */
 }
 
 
