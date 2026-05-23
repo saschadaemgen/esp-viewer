@@ -18,7 +18,7 @@
  *     ICON_BELL       0xE059   DND toggle (topbar)
  *     ICON_BELL_OFF   0xE05A   Stumm/Ignorieren (S5-17, Klingel-Toolbar)
  *     ICON_CAMERA     0xE064   Camera toggle (topbar)
- *     ICON_CIRCLE     0xE069   Record (S5-17, Klingel-Toolbar)
+ *     ICON_CIRCLE     0xE076   Record (S5-17, korrigiert S5-20)
  *     ICON_LOCK_OPEN  0xE10C   Door-open primary action (idle + klingel)
  *     ICON_MIC        0xE118   Mic action (idle)
  *     ICON_PHONE      0xE133   Accept call (klingel toolbar)
@@ -72,7 +72,7 @@ LV_FONT_DECLARE(lucide_22)
 #define ICON_BELL       "\xEE\x81\x99"   /* U+E059 */
 #define ICON_BELL_OFF   "\xEE\x81\x9A"   /* U+E05A stumm/ignorieren (S5-17) */
 #define ICON_CAMERA     "\xEE\x81\xA4"   /* U+E064 */
-#define ICON_CIRCLE     "\xEE\x81\xA9"   /* U+E069 record (S5-17) */
+#define ICON_CIRCLE     "\xEE\x81\xB6"   /* U+E076 circle/record (korrigiert von E069 per lucide.css) */
 #define ICON_LOCK_OPEN  "\xEE\x84\x8C"   /* U+E10C */
 #define ICON_MIC        "\xEE\x84\x98"   /* U+E118 */
 #define ICON_PHONE      "\xEE\x84\xB3"   /* U+E133 */
