@@ -183,10 +183,10 @@ lv_obj_t *scr_ringing_build(lv_obj_t *parent, const scr_ringing_data_t *data)
     lv_obj_clear_flag(btn_row, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(btn_row, LV_OBJ_FLAG_CLICKABLE);
 
-    /* Button 1 LTR: Ignorieren (klein, grau/glass). Stub-Icon ICON_BELL
-     * - in Stufe 3 ersetzbar durch bell-off oder mute. */
+    /* Button 1 LTR: Ignorieren / Stumm (klein, grau/glass). ICON_BELL_OFF
+     * (durchgestrichene Glocke) - per S5-17 Font-Refresh. */
     kring_btn_style_t st_ignore = {
-        .icon = ICON_BELL, .size = UI_KLINGEL_BTN_SM,
+        .icon = ICON_BELL_OFF, .size = UI_KLINGEL_BTN_SM,
         .bg = UI_COLOR_SURFACE, .bg_opa = UI_OPA_SURFACE_3,
         .shadow = UI_COLOR_HAIRLINE, .shadow_opa = UI_OPA_HAIRLINE_STRONG,
         .icon_color = UI_COLOR_TEXT,
@@ -224,26 +224,17 @@ lv_obj_t *scr_ringing_build(lv_obj_t *parent, const scr_ringing_data_t *data)
     };
     s_btn_reject = build_kring_btn(btn_row, &st_reject);
 
-    /* Button 5 LTR: Record (klein, rot). Lucide_22 hat keinen Record-Icon
-     * (Stufe 3 importiert ihn). Stub-Look: roter Button mit kleinem weissem
-     * Innen-Quadrat (klassischer Stop/Record-Look). */
+    /* Button 5 LTR: Record (klein, rot). ICON_CIRCLE (weisser gefuellter
+     * Kreis auf rotem Button) - klassischer Record-Look, per S5-17
+     * Font-Refresh. */
     kring_btn_style_t st_record = {
-        .icon = NULL, .size = UI_KLINGEL_BTN_SM,
+        .icon = ICON_CIRCLE, .size = UI_KLINGEL_BTN_SM,
         .bg = UI_COLOR_DANGER, .bg_opa = LV_OPA_COVER,
         .shadow = UI_COLOR_DANGER, .shadow_opa = UI_OPA_DANGER_GLOW,
         .icon_color = UI_COLOR_TEXT,
-        .icon_scale = 256,
+        .icon_scale = 325,    /* 22 -> ~28 px, kleiner gefuellter Kreis */
     };
     s_btn_record = build_kring_btn(btn_row, &st_record);
-    lv_obj_t *rec_dot = lv_obj_create(s_btn_record);
-    lv_obj_remove_style_all(rec_dot);
-    lv_obj_set_size(rec_dot, 22, 22);
-    lv_obj_set_style_radius(rec_dot, UI_RADIUS_FULL, 0);
-    lv_obj_set_style_bg_color(rec_dot, UI_COLOR_TEXT, 0);
-    lv_obj_set_style_bg_opa(rec_dot, LV_OPA_COVER, 0);
-    lv_obj_center(rec_dot);
-    lv_obj_clear_flag(rec_dot, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_clear_flag(rec_dot, LV_OBJ_FLAG_CLICKABLE);
 
     /* S5-17: KEIN Tuer-Puls mehr - hat im Direct-FB-Setup auf 4 fps
      * gedrueckt (Geraete-Befund). Tuer-Button bleibt statisch. */
