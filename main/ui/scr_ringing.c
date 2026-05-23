@@ -5,12 +5,13 @@
  * Layout (waehrend Klingelns):
  *   y =    0..88     Klingel-Header (UI_KLINGEL_HEADER_H = 88, LVGL,
  *                    "Es klingelt - <DoorName>" gross zentriert)
- *   y =   88..1130   Stream Vollbreite (KLINGEL_VIDEO_H = 1042,
+ *   y =   88..1135   Stream Vollbreite (KLINGEL_VIDEO_H = 1047,
  *                    zwischen Header und Toolbar)
- *   y = 1130..1280   Klingel-Toolbar (UI_KLINGEL_TOOLBAR_H = 150, LVGL,
+ *   y = 1135..1280   Klingel-Toolbar (UI_KLINGEL_TOOLBAR_H = 145, LVGL,
  *                    5 Buttons - Mittelgruppe eng, Aussen-Buttons abgesetzt;
- *                    Inhalt sitzt per Flex-END unten-buendig, die +10 px
- *                    aus S5-20 wirken als Atemraum ueber der Button-Reihe)
+ *                    Inhalt sitzt per Flex-END unten-buendig, die +5 px
+ *                    aus S5-20/S5-21 wirken als dezenter Atemraum ueber
+ *                    der Button-Reihe)
  *
  * Header + Toolbar liegen in sicheren Bereichen die der Stream nicht
  * beschreibt - kein Doppel-Render-Konflikt wie beim alten PPA-Overlay-
@@ -292,14 +293,15 @@ lv_obj_t *scr_ringing_build(lv_obj_t *parent, const scr_ringing_data_t *data)
     lv_obj_set_style_text_opa(line2, 235, 0);
     s_status_label = line2;
 
-    /* S5-18 Klingel-Toolbar unten (S5-20: 150 px, sicherer Bereich).
-     * Dunkler opaker Hintergrund, feine Hairline oben. Keine runden
-     * Ecken (mit Header oben + Toolbar unten ist es ein klares Top/
-     * Bottom-Frame um das Video - Apple-flat).
+    /* S5-18 Klingel-Toolbar unten (S5-20/S5-21: 145 px, sicherer
+     * Bereich). Dunkler opaker Hintergrund, feine Hairline oben.
+     * Keine runden Ecken (mit Header oben + Toolbar unten ist es ein
+     * klares Top/Bottom-Frame um das Video - Apple-flat).
      *
-     * S5-20: Flex-Column mit LV_FLEX_ALIGN_END auf Hauptachse, damit
-     * der btn_row unten-buendig sitzt. Toolbar wurde von 140 auf 150
-     * hochgezogen; die +10 px wirken jetzt als Atem ueber der Button-
+     * S5-20/S5-21: Flex-Column mit LV_FLEX_ALIGN_END auf Hauptachse,
+     * damit der btn_row unten-buendig sitzt. Toolbar wurde von 140
+     * auf 150 (S5-20) und dann zurueck auf 145 (S5-21, +5 netto)
+     * justiert - die 5 px wirken als dezenter Atem ueber der Button-
      * Reihe statt als toter Raum darunter. */
     lv_obj_t *toolbar = lv_obj_create(overlay);
     lv_obj_remove_style_all(toolbar);

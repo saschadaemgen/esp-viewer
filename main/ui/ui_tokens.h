@@ -288,8 +288,8 @@ extern "C" {
  * Pfad hat in S5-08..S5-15 wegen LVGL-Doppel-Render gescheitert).
  *
  *   Klingel-Header:           y =    0 ..   88  (UI_KLINGEL_HEADER_H = 88)
- *   Stream (Klingel-Video):   y =   88 .. 1130  (1042 hoch, Vollbreite)
- *   Klingel-Toolbar:          y = 1130 .. 1280  (UI_KLINGEL_TOOLBAR_H = 150)
+ *   Stream (Klingel-Video):   y =   88 .. 1135  (1047 hoch, Vollbreite)
+ *   Klingel-Toolbar:          y = 1135 .. 1280  (UI_KLINGEL_TOOLBAR_H = 145)
  *
  * S5-18 Apple-Style:
  * - Status oben in der Header-Bar (gross, im Stil der Idle-Topbar)
@@ -298,13 +298,13 @@ extern "C" {
  * - Flach + opak, viel Schwarz, feine Hairlines, dezente Akzente
  * - KEINE Animation (Direct-FB-Perf, S5-17 bewiesen)
  *
- * S5-20: Toolbar von 140 -> 150 hochgezogen (+10 oben). Inhalt sitzt
- * per Flex-END unten-buendig, die 10 px Mehrhoehe wirken als visueller
- * Atem ueber der Button-Reihe. Stream-Video verliert die 10 px nach
- * unten (1052 -> 1042 hoch), Header bleibt.
+ * S5-20/S5-21: Toolbar von 140 -> 150 (S5-20, +10) -> 145 (S5-21, +5 netto).
+ * Inhalt sitzt per Flex-END unten-buendig, die 5 px Mehrhoehe wirken als
+ * dezenter visueller Atem ueber der Button-Reihe. Stream-Video verliert
+ * die 5 px nach unten (1052 -> 1047), Header bleibt.
  */
 #define UI_KLINGEL_HEADER_H       88    /* Obere Status-Bar */
-#define UI_KLINGEL_TOOLBAR_H      150   /* Untere Button-Bar (S5-20: +10) */
+#define UI_KLINGEL_TOOLBAR_H      145   /* Untere Button-Bar (S5-20:+10, S5-21:-5) */
 #define UI_KLINGEL_BTN_LG         96    /* Tuer (gross, primary) */
 #define UI_KLINGEL_BTN_MD         72    /* Annehmen + Ablehnen */
 #define UI_KLINGEL_BTN_SM         56    /* Ignorieren + Record */
