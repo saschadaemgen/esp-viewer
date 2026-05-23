@@ -5,18 +5,27 @@
  * Uncompressed to avoid the bpp=4 odd-pixel heap-corruption bug
  * (LVGL issue #1438).
  *
+ * S5-17 Konverter-Kompat: der lvgl.io-Konverter fuegt seit ~2025 ein
+ * `.static_bitmap = 0,` Feld in den `lv_font_t`-Struct ein (LVGL 9.3+).
+ * Unser LVGL 9.2.2 kennt das Feld nicht. Bei JEDEM neuen Font-Export
+ * muss die Zeile aus lucide_22.c entfernt werden (siehe Kommentar
+ * dort). Alternativ Offline-Konverter `lv_font_conv` verwenden, der
+ * das Feld nicht generiert.
+ *
  * Contains the following icons used across the CARVILON-Display UI:
  *
  *   Klingel + Idle:
  *     ICON_BELL       0xE059   DND toggle (topbar)
+ *     ICON_BELL_OFF   0xE05A   Stumm/Ignorieren (S5-17, Klingel-Toolbar)
  *     ICON_CAMERA     0xE064   Camera toggle (topbar)
- *     ICON_LOCK_OPEN  0xE10C   Door-open primary action (idle)
+ *     ICON_CIRCLE     0xE069   Record (S5-17, Klingel-Toolbar)
+ *     ICON_LOCK_OPEN  0xE10C   Door-open primary action (idle + klingel)
  *     ICON_MIC        0xE118   Mic action (idle)
- *     ICON_PHONE      0xE133   Accept call (ringing overlay)
+ *     ICON_PHONE      0xE133   Accept call (klingel toolbar)
  *     ICON_SETTINGS   0xE154   Settings toggle (topbar)
  *     ICON_X          0xE1B2   Reject call / cancel button
  *     ICON_HISTORY    0xE1F5   History action (idle)
- *     ICON_DOOR_OPEN  0xE3D6   Door-open during ring (ringing overlay)
+ *     ICON_DOOR_OPEN  0xE3D6   Door-open during ring (alt, ungenutzt)
  *
  *   Settings-Screen:
  *     ICON_INFO       0xE0C0   Help-tooltip trigger
@@ -61,7 +70,9 @@ LV_FONT_DECLARE(lucide_22)
 
 /* Klingel + Idle icons */
 #define ICON_BELL       "\xEE\x81\x99"   /* U+E059 */
+#define ICON_BELL_OFF   "\xEE\x81\x9A"   /* U+E05A stumm/ignorieren (S5-17) */
 #define ICON_CAMERA     "\xEE\x81\xA4"   /* U+E064 */
+#define ICON_CIRCLE     "\xEE\x81\xA9"   /* U+E069 record (S5-17) */
 #define ICON_LOCK_OPEN  "\xEE\x84\x8C"   /* U+E10C */
 #define ICON_MIC        "\xEE\x84\x98"   /* U+E118 */
 #define ICON_PHONE      "\xEE\x84\xB3"   /* U+E133 */
