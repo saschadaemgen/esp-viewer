@@ -59,59 +59,114 @@ static lv_obj_t *s_btn_reject   = NULL;
 static lv_obj_t *s_btn_record   = NULL;
 
 
-/* ---------- Toolbar-Button-Builder (S5-18 Apple-flat) ----------
+/* ---------- Toolbar-Button-Builders (S5-19 final, idle-aligned) ----------
  *
- * Alle 5 Buttons teilen sich diese Helper-Funktion. Stil-Variabilitaet
- * (Groesse, Farbe, Icon-Scale) per kring_btn_style_t.
+ * Drei dedizierte Helper-Funktionen fuer die drei visuell unterschied-
+ * lichen Button-Typen der Klingel-Toolbar:
  *
- * S5-18 Refine: KEIN Gradient (Apple-flat). Sehr dezenter SCHWARZER
- * Drop-Shadow fuer Tiefen-Effekt (width 6, ofs_y 2, opa 50), kein
- * farbiger Glow-Halo mehr. Glas-Button (Ignorieren) ohne Shadow.
- * Ruhig, hochwertig, ohne Bunt-Hexerei.
+ *   build_glass_btn   - Annehmen + Ablehnen: feine Glass-Surface
+ *                       (UI_COLOR_SURFACE @ UI_OPA_SURFACE_2) + 1px-
+ *                       Hairline-Border. Icon farb-/opa-konfigurierbar.
+ *                       Genau wie die scr_idle-Glass-Action-Buttons.
+ *   build_primary_btn - Tuer (Mitte): exakt der Idle-primary-Stil
+ *                       (build_action_btn_primary in scr_idle.c) -
+ *                       Accent-Blau Gradient + Accent-Glow. Konsistent
+ *                       zur Tuer-Aktion im Idle.
+ *   build_text_btn    - MUTE + REC: transparent (kein bg, kein border,
+ *                       kein shadow), nur das Icon mit gedaempfter Opa.
+ *                       Das beigefuegte Label wird vom Caller drumherum
+ *                       gebaut (col-Container mit Button + Label).
+ *
+ * Alle Buttons rund (UI_RADIUS_FULL) und clickable. Icons aus lucide_22
+ * mit transform_scale fuer groessere Darstellungen (Pivot mittig 11,11).
  */
-typedef struct {
-    const char    *icon;            /* lucide_22 UTF-8 string, oder NULL */
-    int32_t        size;            /* Aussen-Durchmesser */
-    lv_color_t     bg;
-    lv_opa_t       bg_opa;
-    bool           shadow;          /* dezenter schwarzer Drop, true=an */
-    lv_color_t     icon_color;
-    int32_t        icon_scale;      /* 256 = 1.0, lucide_22 base = 22 px */
-} kring_btn_style_t;
 
-static lv_obj_t *build_kring_btn(lv_obj_t *parent, const kring_btn_style_t *style)
+static void place_icon(lv_obj_t *btn, const char *icon,
+                       lv_color_t color, lv_opa_t opa, int32_t scale)
+{
+    lv_obj_t *lbl = lv_label_create(btn);
+    lv_label_set_text(lbl, icon);
+    lv_obj_set_style_text_font(lbl, &lucide_22, 0);
+    lv_obj_set_style_text_color(lbl, color, 0);
+    lv_obj_set_style_text_opa(lbl, opa, 0);
+    lv_obj_center(lbl);
+    if (scale != 256) {
+        lv_obj_set_style_transform_scale(lbl, scale, 0);
+        lv_obj_set_style_transform_pivot_x(lbl, 11, 0);
+        lv_obj_set_style_transform_pivot_y(lbl, 11, 0);
+    }
+}
+
+/* Glass-Button (Annehmen, Ablehnen). Neutrale Flaeche, sparsam
+ * konturiert. Icon-Farbe/Opa caller-konfigurierbar (Ablehnen ueberlaedt
+ * das auf rot, Annehmen bleibt weiss-gedaempft). */
+static lv_obj_t *build_glass_btn(lv_obj_t *parent, int32_t size,
+                                  const char *icon,
+                                  lv_color_t icon_color, lv_opa_t icon_opa,
+                                  int32_t icon_scale)
 {
     lv_obj_t *btn = lv_obj_create(parent);
     lv_obj_remove_style_all(btn);
-    lv_obj_set_size(btn, style->size, style->size);
+    lv_obj_set_size(btn, size, size);
     lv_obj_set_style_radius(btn, UI_RADIUS_FULL, 0);
-    lv_obj_set_style_border_width(btn, 0, 0);
-    lv_obj_set_style_bg_color(btn, style->bg, 0);
-    lv_obj_set_style_bg_opa(btn, style->bg_opa, 0);
-    if (style->shadow) {
-        /* Apple-flat Drop: schwarz, sehr klein, sehr dezent. Kein
-         * farbiger Glow-Halo (S5-17-Look war zu bunt fuer Sasch). */
-        lv_obj_set_style_shadow_color(btn, lv_color_hex(0x000000), 0);
-        lv_obj_set_style_shadow_width(btn, 6, 0);
-        lv_obj_set_style_shadow_ofs_y(btn, 2, 0);
-        lv_obj_set_style_shadow_opa(btn, 50, 0);   /* ~20 % */
-    }
+    lv_obj_set_style_bg_color(btn, UI_COLOR_SURFACE, 0);
+    lv_obj_set_style_bg_opa(btn, UI_OPA_SURFACE_2, 0);
+    lv_obj_set_style_border_color(btn, UI_COLOR_HAIRLINE, 0);
+    lv_obj_set_style_border_opa(btn, UI_OPA_HAIRLINE_STRONG, 0);
+    lv_obj_set_style_border_width(btn, 1, 0);
     lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
+    place_icon(btn, icon, icon_color, icon_opa, icon_scale);
+    return btn;
+}
 
-    if (style->icon) {
-        lv_obj_t *icon = lv_label_create(btn);
-        lv_label_set_text(icon, style->icon);
-        lv_obj_set_style_text_font(icon, &lucide_22, 0);
-        lv_obj_set_style_text_color(icon, style->icon_color, 0);
-        lv_obj_center(icon);
-        if (style->icon_scale != 256) {
-            lv_obj_set_style_transform_scale(icon, style->icon_scale, 0);
-            lv_obj_set_style_transform_pivot_x(icon, 11, 0); /* lucide_22 = 22 px, pivot mittig */
-            lv_obj_set_style_transform_pivot_y(icon, 11, 0);
-        }
-    }
+/* Primary-Tuer-Button. EXAKT der Idle-primary-Stil aus scr_idle.c
+ * (build_action_btn_primary). Accent-Blau-Gradient + Accent-Glow -
+ * der einzig farbig gefuellte Button der Toolbar, hierarchisch klar
+ * die Hauptaktion. Idle-Glow ist hier explizit erlaubt fuer Konsistenz
+ * mit dem Idle-Tuer-Button. */
+static lv_obj_t *build_primary_btn(lv_obj_t *parent, int32_t size,
+                                    const char *icon, int32_t icon_scale)
+{
+    lv_obj_t *btn = lv_obj_create(parent);
+    lv_obj_remove_style_all(btn);
+    lv_obj_set_size(btn, size, size);
+    lv_obj_set_style_radius(btn, UI_RADIUS_FULL, 0);
+    lv_obj_set_style_bg_color(btn, UI_COLOR_ACCENT_LIGHT, 0);
+    lv_obj_set_style_bg_grad_color(btn, UI_COLOR_ACCENT, 0);
+    lv_obj_set_style_bg_grad_dir(btn, LV_GRAD_DIR_VER, 0);
+    lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(btn, UI_COLOR_ACCENT_LIGHT, 0);
+    lv_obj_set_style_border_opa(btn, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(btn, 1, 0);
+    lv_obj_set_style_shadow_color(btn, UI_COLOR_ACCENT, 0);
+    lv_obj_set_style_shadow_width(btn, 18, 0);
+    lv_obj_set_style_shadow_ofs_y(btn, 8, 0);
+    lv_obj_set_style_shadow_opa(btn, UI_OPA_ACCENT_GLOW, 0);
+    lv_obj_set_style_shadow_spread(btn, -4, 0);
+    lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
+    place_icon(btn, icon, UI_COLOR_TEXT_ON_ACCENT, LV_OPA_COVER, icon_scale);
+    return btn;
+}
 
+/* Text-Button (MUTE, REC). Komplett transparent, kein border, kein
+ * shadow - der Caller stapelt drumherum einen col-Container mit Button
+ * + Label. Icon mit gedaempfter Opa. */
+static lv_obj_t *build_text_btn(lv_obj_t *parent, int32_t size,
+                                 const char *icon,
+                                 lv_color_t icon_color, lv_opa_t icon_opa,
+                                 int32_t icon_scale)
+{
+    lv_obj_t *btn = lv_obj_create(parent);
+    lv_obj_remove_style_all(btn);
+    lv_obj_set_size(btn, size, size);
+    lv_obj_set_style_radius(btn, UI_RADIUS_FULL, 0);
+    lv_obj_set_style_bg_opa(btn, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(btn, 0, 0);
+    lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
+    place_icon(btn, icon, icon_color, icon_opa, icon_scale);
     return btn;
 }
 
@@ -223,16 +278,13 @@ lv_obj_t *scr_ringing_build(lv_obj_t *parent, const scr_ringing_data_t *data)
     lv_obj_clear_flag(btn_row, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(btn_row, LV_OBJ_FLAG_CLICKABLE);
 
-    /* Child 1 (links aussen): Ignorieren / Stumm. Glas/neutral, kein
-     * Shadow (Apple-flat). */
-    kring_btn_style_t st_ignore = {
-        .icon = ICON_BELL_OFF, .size = UI_KLINGEL_BTN_SM,
-        .bg = UI_COLOR_SURFACE, .bg_opa = UI_OPA_SURFACE_3,
-        .shadow = false,
-        .icon_color = UI_COLOR_TEXT,
-        .icon_scale = 256,    /* 22 px native */
-    };
-    s_btn_ignore = build_kring_btn(btn_row, &st_ignore);
+    /* Child 1 (links aussen): MUTE / Stumm. Transparent, Icon weiss
+     * gedaempft (~0.5). Caller fuegt im naechsten Commit ein Label
+     * drumherum. */
+    s_btn_ignore = build_text_btn(btn_row, UI_KLINGEL_BTN_SM,
+                                   ICON_BELL_OFF,
+                                   UI_COLOR_TEXT, 128, /* ~0.50 */
+                                   256);
 
     /* Child 2 (Mitte): Hauptgruppe Annehmen/Tuer/Ablehnen eng beieinander
      * als eigener sub-flex-row Container. LV_SIZE_CONTENT = Container
@@ -249,47 +301,30 @@ lv_obj_t *scr_ringing_build(lv_obj_t *parent, const scr_ringing_data_t *data)
     lv_obj_clear_flag(center_group, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(center_group, LV_OBJ_FLAG_CLICKABLE);
 
-    /* Annehmen (links der Tuer, mittel 72, gruen flat). */
-    kring_btn_style_t st_accept = {
-        .icon = ICON_PHONE, .size = UI_KLINGEL_BTN_MD,
-        .bg = UI_COLOR_OK, .bg_opa = LV_OPA_COVER,
-        .shadow = true,
-        .icon_color = UI_COLOR_TEXT,
-        .icon_scale = 325,    /* 22 -> ~28 px */
-    };
-    s_btn_accept = build_kring_btn(center_group, &st_accept);
+    /* Annehmen (Glass-neutral, Icon ICON_PHONE weiss gedaempft). */
+    s_btn_accept = build_glass_btn(center_group, UI_KLINGEL_BTN_MD,
+                                    ICON_PHONE,
+                                    UI_COLOR_TEXT, 216, /* ~0.85 */
+                                    325);               /* 22 -> ~28 px */
 
-    /* Tuer (mittig, gross 96, primary-blue FLACH - kein Gradient).
-     * Hauptaktion klar durch Groesse + Akzentfarbe, nicht durch Glow
-     * oder Verlauf (Apple-flat S5-18). */
-    kring_btn_style_t st_door = {
-        .icon = ICON_LOCK_OPEN, .size = UI_KLINGEL_BTN_LG,
-        .bg = UI_COLOR_ACCENT, .bg_opa = LV_OPA_COVER,
-        .shadow = true,
-        .icon_color = UI_COLOR_TEXT_ON_ACCENT,
-        .icon_scale = 415,    /* 22 -> ~36 px */
-    };
-    s_btn_door = build_kring_btn(center_group, &st_door);
+    /* Tuer (Mitte, gross, Idle-primary-Blau + Idle-Glow). Einzige
+     * farbige Flaeche der Toolbar - Hauptaktion klar markiert. */
+    s_btn_door = build_primary_btn(center_group, UI_KLINGEL_BTN_LG,
+                                    ICON_LOCK_OPEN,
+                                    415);               /* 22 -> ~36 px */
 
-    /* Ablehnen (rechts der Tuer, mittel 72, rot flat). */
-    kring_btn_style_t st_reject = {
-        .icon = ICON_X, .size = UI_KLINGEL_BTN_MD,
-        .bg = UI_COLOR_DANGER, .bg_opa = LV_OPA_COVER,
-        .shadow = true,
-        .icon_color = UI_COLOR_TEXT,
-        .icon_scale = 325,
-    };
-    s_btn_reject = build_kring_btn(center_group, &st_reject);
+    /* Ablehnen (Glass-neutral wie Annehmen, NUR ICON_X ist rot).
+     * Fluache bleibt neutral - nicht zu viel Rot in der Toolbar. */
+    s_btn_reject = build_glass_btn(center_group, UI_KLINGEL_BTN_MD,
+                                    ICON_X,
+                                    UI_COLOR_DANGER, 242, /* ~0.95 */
+                                    325);
 
-    /* Child 3 (rechts aussen): Record. Klein 56, rot flat, dezent. */
-    kring_btn_style_t st_record = {
-        .icon = ICON_CIRCLE, .size = UI_KLINGEL_BTN_SM,
-        .bg = UI_COLOR_DANGER, .bg_opa = LV_OPA_COVER,
-        .shadow = true,
-        .icon_color = UI_COLOR_TEXT,
-        .icon_scale = 256,
-    };
-    s_btn_record = build_kring_btn(btn_row, &st_record);
+    /* Child 3 (rechts aussen): REC. Transparent, Icon dezent rot (~0.7). */
+    s_btn_record = build_text_btn(btn_row, UI_KLINGEL_BTN_SM,
+                                   ICON_CIRCLE,
+                                   UI_COLOR_DANGER, 179, /* ~0.70 */
+                                   256);
 
     /* S5-17: KEIN Tuer-Puls mehr - hat im Direct-FB-Setup auf 4 fps
      * gedrueckt (Geraete-Befund). Tuer-Button bleibt statisch. */
