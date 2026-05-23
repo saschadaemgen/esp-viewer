@@ -152,27 +152,39 @@ lv_obj_t *scr_ringing_build(lv_obj_t *parent, const scr_ringing_data_t *data)
     lv_obj_remove_style_all(header);
     lv_obj_set_size(header, UI_SCREEN_W, UI_KLINGEL_HEADER_H);
     lv_obj_align(header, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_set_style_bg_color(header, UI_COLOR_BG, 0);     /* S5-18 viel Schwarz */
+    lv_obj_set_style_bg_color(header, UI_COLOR_BG, 0);     /* viel Schwarz */
     lv_obj_set_style_bg_opa(header, LV_OPA_COVER, 0);
     lv_obj_set_style_border_color(header, UI_COLOR_HAIRLINE, 0);
     lv_obj_set_style_border_opa(header, UI_OPA_HAIRLINE, 0);
     lv_obj_set_style_border_width(header, 1, 0);
     lv_obj_set_style_border_side(header, LV_BORDER_SIDE_BOTTOM, 0);
-    lv_obj_set_style_pad_all(header, 0, 0);
+    lv_obj_set_style_pad_all(header, UI_SPACE_2, 0);       /* 8 */
+    lv_obj_set_flex_flow(header, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(header, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(header, 2, 0);                 /* eng zwischen den 2 Zeilen */
     lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(header, LV_OBJ_FLAG_CLICKABLE);
     s_header = header;
 
-    lv_obj_t *status = lv_label_create(header);
-    char buf[96];
-    snprintf(buf, sizeof(buf), "Es klingelt   %s",
-             (data && data->door_name) ? data->door_name : "Hauseingang");
-    lv_label_set_text(status, buf);
-    lv_obj_set_style_text_font(status, UI_FONT_3XL, 0);     /* 26 px */
-    lv_obj_set_style_text_color(status, UI_COLOR_TEXT, 0);
-    lv_obj_set_style_text_opa(status, UI_OPA_TEXT, 0);
-    lv_obj_center(status);
-    s_status_label = status;
+    /* Zeile 1 - "ES KLINGELT" klein, uppercase, letter-spaced, gedaempft.
+     * UI_FONT_XS = lv_font_montserrat_12. Apple-style overline-label. */
+    lv_obj_t *line1 = lv_label_create(header);
+    lv_label_set_text(line1, "ES KLINGELT");
+    lv_obj_set_style_text_font(line1, UI_FONT_XS, 0);
+    lv_obj_set_style_text_color(line1, UI_COLOR_TEXT, 0);
+    lv_obj_set_style_text_opa(line1, UI_OPA_TEXT_TERTIARY, 0);
+    lv_obj_set_style_text_letter_space(line1, 2, 0);
+
+    /* Zeile 2 - DoorName gross, hell. UI_FONT_XL = montserrat_22.
+     * Opa knapp unter cover (~0.92, 235/255) - leichter "Apple-Hell". */
+    lv_obj_t *line2 = lv_label_create(header);
+    lv_label_set_text(line2,
+                      (data && data->door_name) ? data->door_name : "Hauseingang");
+    lv_obj_set_style_text_font(line2, UI_FONT_XL, 0);
+    lv_obj_set_style_text_color(line2, UI_COLOR_TEXT, 0);
+    lv_obj_set_style_text_opa(line2, 235, 0);
+    s_status_label = line2;
 
     /* S5-18 Klingel-Toolbar unten (140 px, sicherer Bereich). Dunkler
      * opaker Hintergrund, feine Hairline oben. Keine runden Ecken (mit
@@ -334,10 +346,10 @@ void scr_ringing_set_record_handler(lv_obj_t *overlay,
 
 void scr_ringing_set_door_name(const char *door_name)
 {
+    /* s_status_label zeigt im S5-19-Header NUR den Door-Namen (Zeile 2);
+     * die Overline "ES KLINGELT" ist statisch und gehoert zu Zeile 1. */
     if (!s_status_label || !door_name) return;
-    char buf[96];
-    snprintf(buf, sizeof(buf), "Es klingelt   %s", door_name);
-    lv_label_set_text(s_status_label, buf);
+    lv_label_set_text(s_status_label, door_name);
 }
 
 
