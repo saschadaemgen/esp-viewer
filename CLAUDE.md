@@ -1,9 +1,9 @@
 # CLAUDE.md - display_app Repository
 
 **Repo:** ESP32-P4 indoor monitor firmware
-**Project:** KOENIGSLIGA / unifix indoor monitor (user brand: CARVILON)
+**Project:** CARVILON indoor monitor
 **Last updated:** 24 May 2026, end of ESP season 5 (render breakthrough + doorbell design)
-**Track:** ESP chat (hardware/firmware) - separate from the unifix-server repo
+**Track:** ESP chat (hardware/firmware) - separate from the carvilon-server repo
 
 > Language policy: all source, comments and documentation are English. The
 > chat workflow and the current device UI are German.
@@ -12,10 +12,11 @@
 
 ## 1. Overview
 
-display_app is the ESP32-P4 firmware for the third-party indoor monitor in a
-UniFi Access multi-tenant building installation. It runs on the GUITION
-JC8012P4A1 hardware (ESP32-P4 + ESP32-C6-MINI-1U + 10.1" display) and connects
-to the central unifix server (Go backend) on a per-installation Raspberry Pi.
+display_app is the ESP32-P4 firmware for the CARVILON indoor monitor. CARVILON
+is a standalone intercom system, compatible with UniFi Protect and UniFi
+Access. It runs on the GUITION JC8012P4A1 hardware (ESP32-P4 + ESP32-C6-MINI-1U
++ 10.1" display) and connects to the central CARVILON server (Go backend) on a
+per-installation Raspberry Pi.
 
 Three-layer architecture:
 
@@ -59,7 +60,7 @@ BACKUP HARDWARE:
 DEV NETWORK (Recklinghausen):
    UDM SE:           192.168.1.1
    UA Intercom:      192.168.1.249 (G3 doorbell)
-   Raspberry Pi 4:   192.168.1.42 (hostname `unifix`)
+   Raspberry Pi 4:   192.168.1.42 (hostname `carvilon`)
    ESP32-P4:         192.168.1.28  MAC 80:f1:b2:d0:b5:36
                      Wi-Fi: SONCLOUD
 ```
@@ -85,7 +86,7 @@ ESP32-P4 FIRMWARE:
 
 RASPBERRY PI:
    Stream server on :8555 (MJPEG, auth-free)
-   unifix-server Go binary (separate repo, master chat) on :9080
+   carvilon-server Go binary (separate repo, master chat) on :9080
 ```
 
 ---
@@ -100,6 +101,8 @@ display_app/
       stream_pipeline.c               MJPEG receiver, direct-FB render
       stream_pipeline.h
       services/                       Network layer
+         (note: unifix_client.c / unifix_config.c are legacy file names,
+          to be renamed to CARVILON in the S6 refactoring)
          device_token.c               read token from NVS
          wifi_config.c                Wi-Fi credentials from NVS
          setup_mode.c                 console-paste fallback on empty NVS
@@ -131,7 +134,7 @@ display_app/
 ### 5.1 NVS Layout
 
 ```
-Namespace: "unifix"
+Namespace: "unifix"   (legacy NVS namespace, kept for compatibility)
    device_token   bearer token, length 43
    wifi_ssid      Wi-Fi SSID
    wifi_pwd       Wi-Fi password
@@ -196,7 +199,7 @@ Buffer allocation:
 File:    main/services/sse_client.c
 IMPORTANT: does NOT use esp_http_client (cannot hold long-stream connections).
 Pipeline:
-   1. raw socket connect to unifix server (port 9080 default)
+   1. raw socket connect to CARVILON server (port 9080 default)
    2. HTTP GET with Authorization: Bearer + Accept: text/event-stream
    3. chunked-decode loop, dispatch events (heartbeat, doorbell.ring,
       doorbell.cancel, unread_count, config.changed)
@@ -280,10 +283,10 @@ On stack/buffer bumps ALWAYS check `heap_init ... RAM` in the boot log
 
 ---
 
-## 11. Working With the Master Chat (unifix-server)
+## 11. Working With the Master Chat (carvilon-server)
 
 ```
-unifix-server repo (separate) provides the server endpoints:
+carvilon-server repo (separate) provides the server endpoints:
 
 ESP API (all bearer auth):
    GET  /esp/heartbeat         liveness check
@@ -297,7 +300,7 @@ ESP API (all bearer auth):
 
 Stream server (separate, :8555): /api/stream.mjpeg?src=mjpeg_bal (auth-free)
 
-Provisioning on RPi: token from unifix admin (length 43), handed to
+Provisioning on RPi: token from CARVILON admin (length 43), handed to
    python tools/provision-esp.py
 ```
 

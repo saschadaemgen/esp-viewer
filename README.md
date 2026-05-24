@@ -7,21 +7,21 @@
 ![Color](https://img.shields.io/badge/framebuffer-RGB565-orange)
 ![Season](https://img.shields.io/badge/season-5%20complete-success)
 ![Build](https://img.shields.io/badge/build-passing-brightgreen)
-![License](https://img.shields.io/badge/license-proprietary-lightgrey)
+![License](https://img.shields.io/badge/license-AGPL--3.0-blue)
 ![Status](https://img.shields.io/badge/status-active%20development-blue)
 
-ESP32-P4 indoor monitor firmware for UniFi Access intercom installations.
+ESP32-P4 indoor monitor firmware for **CARVILON**.
 
-Part of the **unifix** platform (user-facing brand: **CARVILON**): a private
-multi-tenant building system built on top of UniFi Access hardware that gives
-tenants doorbell reception, live video and door unlocking on a 10.1" touch
-display. The server side (Go) lives in a separate repository; this repo is the
-ESP32 firmware only.
+CARVILON is a standalone intercom system, compatible with UniFi Protect and
+UniFi Access. This repository is the firmware for the indoor monitor: a 10.1"
+touch display that gives tenants doorbell reception, live video and door
+unlocking. The CARVILON server (Go backend) and the video server live in
+separate repositories.
 
-The ESP is the **indoor monitor (receiver/display)**, not the door station.
-It receives an MJPEG stream prepared by the unifix server (Raspberry Pi),
-decodes it via hardware JPEG and displays it, along with the doorbell, idle,
-settings and screensaver UI. It does not send video.
+The monitor is the **receiver/display** side, not the door station. It
+receives an MJPEG stream prepared by the CARVILON server, decodes it via
+hardware JPEG and shows it, along with the doorbell, idle, settings and
+screensaver UI. It does not send video.
 
 > Note: project communication and the current device UI are in German. All
 > source, comments and documentation are English.
@@ -71,28 +71,19 @@ knows no LVGL, `main` wires both together.
 main.c                     App coordinator: boot flow, LVGL init, PPA init,
                            build screens, start tasks, wire events
 ui/                        Presentation layer (LVGL 9.2.2, RGB565)
-   scr_loading              Boot screen with glow
-   scr_idle                 Stream-view slot + topbar + action bar
-   scr_ringing              Doorbell screen (full-width video + toolbar)
-   scr_screensaver          Pixel clock + weather
-   scr_settings             5+1 sections, auto-save
-   idle_mode_mgr            Backlight / view-mode control
-   lucide_22 / lucide_88    Icon fonts
-services/                  Network layer
-   device_token             Bearer token from NVS
-   wifi_config              Wi-Fi credentials from NVS
-   setup_mode               Console-paste fallback on empty NVS
-   unifix_client            HTTP client (heartbeat / reject / unlock / config)
-   sse_client               SSE long-stream on /esp/events (raw socket)
+services/                  Network layer (HTTP, SSE, NVS, time sync)
 stream_pipeline.c          MJPEG receiver, HW JPEG decode, direct-FB render
 ```
 
-All server communication uses bearer auth against a unifix server (Go backend
-on a Raspberry Pi, separate codebase).
+All server communication uses bearer auth against the CARVILON server (Go
+backend on a Raspberry Pi, separate codebase).
 
 **Important distinction:** *adoption* is done by the device itself, *pairing*
-(tenant association) is done by the admin in the UA/unifix UI. The monitor
-does not need to handle pairing.
+(tenant association) is done by the admin in the CARVILON UI. The monitor does
+not need to handle pairing.
+
+> Note: some files are still named `unifix_*` (legacy placeholder). Renaming
+> them to CARVILON naming is part of the season 6 refactoring.
 
 ---
 
@@ -130,8 +121,8 @@ header and a bottom action toolbar, both in the safe (stream-free) area.
 
 - **ESP-IDF v5.5.2** (path: `C:\Espressif\frameworks\esp-idf-v5.5.2`), env
   `idf5.5_py3.11_env` (Python 3.11).
-- Reachable unifix server on the LAN.
-- A valid device token from the unifix admin (token length 43).
+- Reachable CARVILON server on the LAN.
+- A valid device token from the CARVILON admin (token length 43).
 
 ---
 
@@ -177,7 +168,7 @@ Healthy boot markers:
 ```
 esp_psram: Found 32MB PSRAM device, Speed: 200MHz
 sta ip: 192.168.1.28
-Heartbeat OK - unifix server reachable
+Heartbeat OK - server reachable
 STREAM: dpi fbs: fb0=... fb1=... (same=0)   <- two real FBs
 STREAM: Boundary: 'frame'
 ==== Task CPU stats ====                     <- every 5s, per-task CPU truth
@@ -200,26 +191,35 @@ First boot sequence:
 display_app/
 |-- main/
 |   |-- main.c                 App coordinator + PPA init
-|   |-- stream_pipeline.c      MJPEG receiver, direct-FB render (both FBs)
+|   |-- stream_pipeline.c/.h   MJPEG receiver, direct-FB render (both FBs)
+|   |-- udm_cert.pem           pinned cert
 |   |-- services/              Network + NVS
-|   |   |-- device_token.c
-|   |   |-- wifi_config.c
-|   |   |-- setup_mode.c
-|   |   |-- unifix_client.c
-|   |   \-- sse_client.c       Raw-socket SSE
+|   |   |-- device_token.c/.h    bearer token from NVS
+|   |   |-- wifi_config.c/.h     Wi-Fi credentials from NVS
+|   |   |-- setup_mode.c/.h      console-paste fallback on empty NVS
+|   |   |-- sse_client.c/.h      long-lived SSE (raw socket)
+|   |   |-- time_sync.c/.h       NTP time sync
+|   |   |-- config_cache.c/.h    cached UI config
+|   |   |-- unifix_client.c/.h   HTTP client (legacy name -> CARVILON)
+|   |   \-- unifix_config.c/.h   config fetch/apply (legacy name -> CARVILON)
 |   \-- ui/                    Screens, animations, icon fonts
-|       |-- scr_idle.c         Design reference (glass buttons, hairlines)
-|       |-- scr_ringing.c      Doorbell screen (header + video + toolbar)
-|       |-- scr_screensaver.c
-|       |-- scr_settings.c
-|       |-- idle_mode_mgr.c
-|       |-- lucide_22.c/.h     Icon font (bell-off, circle, etc.)
-|       \-- ui_tokens.h        Design tokens (colors, spacing, radii)
+|       |-- scr_loading.c/.h     boot screen
+|       |-- scr_idle.c/.h        idle: stream view + topbar + actions
+|       |-- scr_ringing.c/.h     doorbell screen (header + video + toolbar)
+|       |-- scr_screensaver.c/.h pixel clock + weather
+|       |-- scr_settings.c/.h    settings (auto-save)
+|       |-- idle_mode_mgr.c/.h   backlight / view-mode control
+|       |-- ui_animations.c/.h   crossfades
+|       |-- ui_icons.c/.h        icon glyph mapping
+|       |-- ui_tokens.h          design tokens
+|       |-- lucide_22 / lucide_88        icon fonts
+|       \-- montserrat_14/18/22/140/200  text fonts
 |-- tools/
 |   \-- provision-esp.py       NVS bulk provisioning
 |-- partitions.csv
 |-- sdkconfig.defaults
-\-- CMakeLists.txt
+|-- CMakeLists.txt
+\-- dependencies.lock
 ```
 
 ---
@@ -236,9 +236,10 @@ display_app/
 
 **Planned (season 6+):**
 
+- Rename legacy `unifix_*` files/symbols to CARVILON naming
 - Accept-call flow with bidirectional audio (ES8311 codec present)
 - Mute/ignore action (back to idle), REC call recording
-- History view on the ESP (coordinated with the server backend)
+- History view on the monitor (coordinated with the server backend)
 - Investigate periodic blue reset flash (~5 min)
 - Code refactoring and cleanup, incl. migrating German comments/docs to English
 
@@ -272,18 +273,22 @@ display_app/
 - **LVGL** stays at 9.2.2. Do not change version numbers in config files
   without approval.
 - **BSP** `esp32_p4_function_ev_board` is not VCS-tracked (lives locally).
-  Note any local BSP getters in the season report.
 - **Maxim:** don't guess, look it up. Marathon not sprint. Quality first.
 
 ---
 
 ## License
 
-Proprietary. No open-source release planned.
+Licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)**.
+
+The firmware and the rest of the CARVILON open-source stack are AGPL-3.0. The
+video server is a separate, commercial component and is not covered by this
+license.
 
 ---
 
 ## Repositories
 
-- **unifix-server** (Go backend): separate private repo
-- **esp-viewer** (this repo): ESP32 firmware
+- **carvilon-server** (Go backend): separate repo
+- **video server**: separate, commercial component
+- **esp-viewer** (this repo): ESP32 indoor-monitor firmware
